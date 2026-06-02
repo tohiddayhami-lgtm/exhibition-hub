@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState, Suspense } from 'react';
+import React, { useRef, useEffect, useState, Suspense, useMemo } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, Html, useGLTF, PointerLockControls, Text, Billboard } from '@react-three/drei';
 import * as THREE from 'three';
@@ -248,182 +248,211 @@ function ExhibitionWall({ hall }: { hall: Hall }) {
 }
 
 // Individual realistic interactive trade fair booth model
-function BoothStructure({ 
-  booth, 
-  active, 
-  onSelect 
-}: { 
-  booth: Booth; 
-  active: boolean; 
+function BoothStructure({
+  booth,
+  active,
+  onSelect
+}: {
+  booth: Booth;
+  active: boolean;
   onSelect: () => void;
 }) {
   const [hovered, setHovered] = useState(false);
 
   useEffect(() => {
     document.body.style.cursor = hovered ? 'pointer' : 'auto';
-    return () => {
-      document.body.style.cursor = 'auto';
-    };
+    return () => { document.body.style.cursor = 'auto'; };
   }, [hovered]);
 
-  const cornerRadius = 0.15;
-  const colColor = booth.themeColor || '#444';
+  const col = booth.themeColor || '#2563eb';
+  const isLit = hovered || active;
 
   return (
-    <group 
-      position={[booth.posX, 0, booth.posZ]} 
-      onClick={(e) => {
-        e.stopPropagation();
-        onSelect();
-      }}
+    <group
+      position={[booth.posX, 0, booth.posZ]}
+      onClick={(e) => { e.stopPropagation(); onSelect(); }}
       onPointerOver={(e) => { e.stopPropagation(); setHovered(true); }}
       onPointerOut={() => setHovered(false)}
     >
-      {/* 1. SOLID FLOOR CARPET PLATFORM COMPONENT */}
-      <mesh position={[0, 0.02, 0]} receiveShadow>
-        <boxGeometry args={[booth.width, 0.04, booth.depth]} />
-        <meshStandardMaterial 
-          color={active ? '#1c1c1c' : '#2d3339'} 
-          roughness={0.6} 
+      {/* 1. CARPET PLATFORM */}
+      <mesh position={[0, 0.025, 0]} receiveShadow>
+        <boxGeometry args={[booth.width, 0.05, booth.depth]} />
+        <meshStandardMaterial color="#1c2130" roughness={0.7} metalness={0} />
+      </mesh>
+
+      {/* LED edge glow strip around carpet */}
+      <mesh position={[0, 0.052, 0]}>
+        <boxGeometry args={[booth.width + 0.06, 0.018, booth.depth + 0.06]} />
+        <meshStandardMaterial
+          color={col}
+          emissive={col}
+          emissiveIntensity={isLit ? 1.2 : 0.35}
+          roughness={0.05}
+          metalness={0.9}
         />
       </mesh>
 
-      {/* Carpet Border Highlights */}
-      <mesh position={[0, 0.041, 0]}>
-        <boxGeometry args={[booth.width + 0.04, 0.02, booth.depth + 0.04]} />
-        <meshStandardMaterial 
-          color={hovered || active ? colColor : '#666'} 
-          roughness={0.1}
-          metalness={0.8}
-        />
+      {/* 2. BACK WALL — white with theme-color top band */}
+      <mesh position={[0, booth.height / 2, -booth.depth / 2 + 0.06]} castShadow receiveShadow>
+        <boxGeometry args={[booth.width, booth.height, 0.12]} />
+        <meshStandardMaterial color="#f7f7f7" roughness={0.85} />
+      </mesh>
+      {/* Theme-color top accent band */}
+      <mesh position={[0, booth.height - 0.18, -booth.depth / 2 + 0.13]}>
+        <boxGeometry args={[booth.width * 0.96, 0.36, 0.02]} />
+        <meshStandardMaterial color={col} emissive={col} emissiveIntensity={0.5} roughness={0.1} metalness={0.6} />
+      </mesh>
+      {/* Inner graphic panel */}
+      <mesh position={[0, booth.height * 0.44, -booth.depth / 2 + 0.14]}>
+        <boxGeometry args={[booth.width * 0.88, booth.height * 0.62, 0.015]} />
+        <meshStandardMaterial color={active ? '#eef2ff' : '#f0f0f0'} roughness={0.9} />
       </mesh>
 
-      {/* 2. EXCEEDING SOLID BACK WALL FOR COMMERCIAL SIGNBOARD */}
-      <mesh position={[0, booth.height / 2, -booth.depth / 2 + 0.05]} castShadow receiveShadow>
-        <boxGeometry args={[booth.width, booth.height, 0.1]} />
-        <meshStandardMaterial color="#fafafa" roughness={0.8} />
+      {/* 3. SIDE PILLARS — dark body + LED strip */}
+      {([-1, 1] as const).map((side) => (
+        <group key={side} position={[side * (booth.width / 2 - 0.12), booth.height / 2, booth.depth / 2 - 0.12]}>
+          {/* Pillar body */}
+          <mesh castShadow>
+            <boxGeometry args={[0.22, booth.height, 0.22]} />
+            <meshStandardMaterial color="#1a1e26" roughness={0.3} metalness={0.6} />
+          </mesh>
+          {/* Front face LED strip */}
+          <mesh position={[side * -0.11, 0, 0.115]}>
+            <boxGeometry args={[0.03, booth.height * 0.85, 0.01]} />
+            <meshStandardMaterial color={col} emissive={col} emissiveIntensity={isLit ? 1.5 : 0.5} roughness={0} metalness={1} />
+          </mesh>
+        </group>
+      ))}
+
+      {/* 4. OVERHEAD TRUSS — brushed aluminium */}
+      <mesh position={[0, booth.height + 0.06, 0]}>
+        <boxGeometry args={[booth.width, 0.14, booth.depth]} />
+        <meshStandardMaterial color="#4a4e58" roughness={0.25} metalness={0.92} />
+      </mesh>
+      {/* Truss front beam with LED underlight */}
+      <mesh position={[0, booth.height, booth.depth / 2 - 0.12]}>
+        <boxGeometry args={[booth.width, 0.06, 0.06]} />
+        <meshStandardMaterial color={col} emissive={col} emissiveIntensity={isLit ? 1.0 : 0.3} roughness={0} metalness={1} />
       </mesh>
 
-      {/* Backwall architectural graphic trim panel */}
-      <mesh position={[0, booth.height / 2, -booth.depth / 2 + 0.11]}>
-        <boxGeometry args={[booth.width * 0.9, booth.height * 0.8, 0.02]} />
-        <meshStandardMaterial color={active ? '#f3f4f6' : '#eceef0'} roughness={0.9} />
-      </mesh>
-
-      {/* 3. SOLID GRAPHIC SIDE PILLARS AND POSTS */}
-      <mesh position={[-booth.width / 2 + cornerRadius, booth.height / 2, booth.depth / 2 - cornerRadius]} castShadow>
-        <boxGeometry args={[0.2, booth.height, 0.2]} />
-        <meshStandardMaterial color={colColor} roughness={0.2} metalness={0.7} />
-      </mesh>
-      <mesh position={[booth.width / 2 - cornerRadius, booth.height / 2, booth.depth / 2 - cornerRadius]} castShadow>
-        <boxGeometry args={[0.2, booth.height, 0.2]} />
-        <meshStandardMaterial color={colColor} roughness={0.2} metalness={0.7} />
-      </mesh>
-
-      {/* 4. SOLID OVERHEAD TRUSS LINE */}
-      <mesh position={[0, booth.height, 0]}>
-        <boxGeometry args={[booth.width, 0.15, booth.depth]} />
-        <meshStandardMaterial color="#1a1a1a" roughness={0.1} metalness={0.9} />
-      </mesh>
-
-      {/* 5. SIGNBOARD — WebGL Text so it renders inside the VR headset */}
-      <group position={[0, booth.height - 0.5, booth.depth / 2 - 0.05]}>
-        {/* Dark glass backing plate */}
+      {/* 5. SIGNBOARD — always-visible WebGL text, high-contrast design */}
+      <group position={[0, booth.height - 0.42, booth.depth / 2 + 0.01]}>
+        {/* Full-width dark glass panel */}
         <mesh>
-          <boxGeometry args={[booth.width * 0.85, 0.55, 0.05]} />
-          <meshStandardMaterial color="#111" roughness={0.01} metalness={0.95} transparent opacity={0.9} />
+          <boxGeometry args={[booth.width * 0.96, 0.6, 0.055]} />
+          <meshStandardMaterial color="#0d111a" roughness={0.02} metalness={0.98} transparent opacity={0.95} />
         </mesh>
-        {/* Colored accent trim */}
-        <mesh position={[0, 0, 0.032]}>
-          <boxGeometry args={[booth.width * 0.87, 0.04, 0.01]} />
-          <meshStandardMaterial color={colColor} emissive={colColor} emissiveIntensity={0.4} />
+        {/* Bottom glow trim */}
+        <mesh position={[0, -0.31, 0.035]}>
+          <boxGeometry args={[booth.width * 0.96, 0.025, 0.01]} />
+          <meshStandardMaterial color={col} emissive={col} emissiveIntensity={0.8} />
         </mesh>
-        {/* Booth number badge */}
+
+        {/* ── BOOTH NUMBER BADGE (always white-on-color for visibility) ── */}
+        <mesh position={[-(booth.width * 0.32), 0.02, 0.04]}>
+          <boxGeometry args={[0.42, 0.42, 0.01]} />
+          <meshStandardMaterial color={col} emissive={col} emissiveIntensity={0.6} roughness={0.05} metalness={0.8} />
+        </mesh>
         <Text
-          position={[-(booth.width * 0.3), 0, 0.04]}
-          fontSize={0.11}
-          color={colColor}
+          position={[-(booth.width * 0.32), 0.02, 0.052]}
+          fontSize={0.14}
+          color="#ffffff"
           anchorX="center"
           anchorY="middle"
-          outlineWidth={0.004}
-          outlineColor="#000"
-        >
-          {`[${booth.boothNumber}]`}
-        </Text>
-        {/* Company name */}
-        <Text
-          position={[booth.width * 0.08, 0, 0.04]}
-          fontSize={0.13}
-          color="white"
-          anchorX="center"
-          anchorY="middle"
-          maxWidth={booth.width * 0.55}
           outlineWidth={0.005}
-          outlineColor="#000"
+          outlineColor="#000000"
+        >
+          {booth.boothNumber}
+        </Text>
+
+        {/* ── COMPANY NAME — white, large, readable ── */}
+        <Text
+          position={[booth.width * 0.1, 0.02, 0.048]}
+          fontSize={0.14}
+          color="#ffffff"
+          anchorX="center"
+          anchorY="middle"
+          maxWidth={booth.width * 0.52}
+          outlineWidth={0.005}
+          outlineColor="#000000"
         >
           {booth.companyName}
         </Text>
       </group>
 
-      {/* 6. FRONT COMMERCIAL RECEPTION DESK / INFORMATION COUNTER */}
+      {/* 6. RECEPTION DESK */}
       <group position={[booth.width / 3.2, 0.45, booth.depth / 4.2]}>
-        {/* Counter structure */}
         <mesh castShadow receiveShadow>
-          <boxGeometry args={[0.92, 0.9, 0.5]} />
-          <meshStandardMaterial color="#fafafa" roughness={0.15} />
+          <boxGeometry args={[0.9, 0.9, 0.48]} />
+          <meshStandardMaterial color="#f5f5f5" roughness={0.2} metalness={0.05} />
         </mesh>
-        {/* Counter custom wood trim top */}
-        <mesh position={[0, 0.46, 0]}>
-          <boxGeometry args={[1.0, 0.06, 0.58]} />
-          <meshStandardMaterial color={colColor} roughness={0.1} />
+        <mesh position={[0, 0.47, 0]}>
+          <boxGeometry args={[0.98, 0.055, 0.56]} />
+          <meshStandardMaterial color={col} roughness={0.08} metalness={0.7} />
         </mesh>
-        {/* Small desk sign (WebGL text) */}
         <Text
-          position={[0, 0.65, 0.12]}
-          fontSize={0.07}
-          color="#c9a84c"
+          position={[0, 0.66, 0.13]}
+          fontSize={0.065}
+          color="#e8c85a"
           anchorX="center"
           anchorY="middle"
-          outlineWidth={0.003}
+          outlineWidth={0.002}
           outlineColor="#000"
         >
           INFO
         </Text>
       </group>
 
-      {/* 7. DISPLAY CORE: Render custom GLB model OR Fallback stylized 3D showroom shapes */}
-      <group position={[0, 0.02, 0]}>
+      {/* 7. PRODUCT DISPLAY */}
+      <group position={[0, 0.05, 0]}>
         {booth.modelUrl ? (
-          <Suspense fallback={<PlaceholderProductStyle themeColor={colColor} style={booth.stylePreset} />}>
+          <Suspense fallback={<PlaceholderProductStyle themeColor={col} style={booth.stylePreset} />}>
             <GLTFModelLoader url={booth.modelUrl} scale={booth.modelScale || 1} />
           </Suspense>
         ) : (
-          <PlaceholderProductStyle themeColor={colColor} style={booth.stylePreset} />
+          <PlaceholderProductStyle themeColor={col} style={booth.stylePreset} />
         )}
       </group>
 
-      {/* Floating company name — Billboard so it always faces the visitor, visible in VR */}
-      <Billboard position={[0, booth.height + 0.55, 0]}>
-        {/* Background card */}
+      {/* 8. FLOATING BILLBOARD — always faces visitor, large & clickable, visible in VR */}
+      <Billboard position={[0, booth.height + 0.72, 0]}>
+        {/* Outer glow ring (active state) */}
+        {active && (
+          <mesh>
+            <planeGeometry args={[booth.width * 0.88, 0.58]} />
+            <meshBasicMaterial color={col} transparent opacity={0.22} />
+          </mesh>
+        )}
+        {/* Card */}
         <mesh onClick={(e) => { e.stopPropagation(); onSelect(); }}>
-          <planeGeometry args={[booth.width * 0.75, 0.38]} />
+          <planeGeometry args={[booth.width * 0.82, 0.48]} />
           <meshStandardMaterial
-            color={active ? colColor : '#111827'}
-            transparent
-            opacity={0.88}
-            roughness={0.1}
-            metalness={0.5}
+            color={active ? col : '#0d111a'}
+            transparent opacity={0.93}
+            roughness={0.05} metalness={0.85}
           />
         </mesh>
-        {/* Company name text */}
+        {/* Booth number on billboard */}
         <Text
-          position={[0, 0, 0.02]}
-          fontSize={0.15}
-          color={active ? '#000' : 'white'}
+          position={[-(booth.width * 0.28), 0, 0.005]}
+          fontSize={0.13}
+          color={active ? '#000' : col}
           anchorX="center"
           anchorY="middle"
-          maxWidth={booth.width * 0.7}
           outlineWidth={0.004}
+          outlineColor={active ? '#fff' : '#000'}
+        >
+          {booth.boothNumber}
+        </Text>
+        {/* Company name on billboard */}
+        <Text
+          position={[booth.width * 0.08, 0, 0.005]}
+          fontSize={0.15}
+          color={active ? '#000' : '#ffffff'}
+          anchorX="center"
+          anchorY="middle"
+          maxWidth={booth.width * 0.55}
+          outlineWidth={0.005}
           outlineColor={active ? '#fff' : '#000'}
           onClick={(e) => { e.stopPropagation(); onSelect(); }}
         >
@@ -481,25 +510,20 @@ function SceneCameraController({ visitorPos, teleportTarget, setTeleportTarget, 
   return null;
 }
 
-// Quest 3 / WebXR controller locomotion: left stick walk, right stick snap-turn, right trigger select
+// Quest 3: left stick = walk, right stick X = 45° snap turn
 function XRLocomotionController({
   hall,
-  booths,
   setVisitorPos,
-  onSelectBooth,
 }: {
   hall: Hall;
-  booths: Booth[];
   setVisitorPos: (pos: [number, number, number]) => void;
-  onSelectBooth: (booth: Booth) => void;
 }) {
   const { gl, camera } = useThree();
   const baseRefSpaceRef = useRef<XRReferenceSpace | null>(null);
   const playerX = useRef(0);
   const playerZ = useRef(0);
-  const playerYaw = useRef(0);        // accumulated snap-turn yaw (radians)
-  const snapLocked = useRef(false);   // prevent rapid repeated snaps
-  const triggerWasPressed = useRef(false);
+  const playerYaw = useRef(0);
+  const snapLocked = useRef(false);
 
   useFrame((_, delta) => {
     if (!gl.xr.isPresenting) {
@@ -512,7 +536,6 @@ function XRLocomotionController({
       return;
     }
 
-    // Capture base reference space once per session (before any locomotion offsets)
     if (!baseRefSpaceRef.current) {
       const refSpace = gl.xr.getReferenceSpace();
       if (!refSpace) return;
@@ -522,18 +545,15 @@ function XRLocomotionController({
     const session = gl.xr.getSession();
     if (!session) return;
 
-    let dx = 0;
-    let dz = 0;
+    let dx = 0, dz = 0;
     const speed = 3.0 * Math.min(delta, 0.05);
     let didSnapTurn = false;
-    let triggerPressed = false;
 
     for (const source of session.inputSources) {
       if (!source.gamepad) continue;
       const axes = source.gamepad.axes;
 
       if (source.handedness === 'left') {
-        // Left thumbstick → smooth locomotion relative to headset direction
         const thumbX = axes.length >= 4 ? axes[2] : 0;
         const thumbY = axes.length >= 4 ? axes[3] : 0;
         if (Math.abs(thumbX) > 0.15 || Math.abs(thumbY) > 0.15) {
@@ -543,14 +563,12 @@ function XRLocomotionController({
           if (forward.lengthSq() < 0.001) forward.set(0, 0, -1);
           forward.normalize();
           const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
-          // thumbY negative = pushed forward = move forward
           dx += (forward.x * -thumbY + right.x * thumbX) * speed;
           dz += (forward.z * -thumbY + right.z * thumbX) * speed;
         }
       }
 
       if (source.handedness === 'right') {
-        // Right thumbstick X → 45° snap turn
         const turnX = axes.length >= 4 ? axes[2] : 0;
         if (Math.abs(turnX) > 0.65 && !snapLocked.current) {
           playerYaw.current += turnX > 0 ? -Math.PI / 4 : Math.PI / 4;
@@ -559,28 +577,9 @@ function XRLocomotionController({
         } else if (Math.abs(turnX) < 0.3) {
           snapLocked.current = false;
         }
-
-        // Right index trigger (button index 0) → select nearest booth within reach
-        const trigger = source.gamepad.buttons[0];
-        if (trigger?.pressed) triggerPressed = true;
       }
     }
 
-    // Trigger: select closest booth within 5 m
-    if (triggerPressed && !triggerWasPressed.current) {
-      let closest: Booth | null = null;
-      let minDist = 5;
-      for (const booth of booths) {
-        const ddx = booth.posX - playerX.current;
-        const ddz = booth.posZ - playerZ.current;
-        const dist = Math.sqrt(ddx * ddx + ddz * ddz);
-        if (dist < minDist) { minDist = dist; closest = booth; }
-      }
-      if (closest) onSelectBooth(closest);
-    }
-    triggerWasPressed.current = triggerPressed;
-
-    // Update position
     if (dx !== 0 || dz !== 0) {
       const halfW = hall.width / 2 - 2;
       const halfD = hall.depth / 2 - 2;
@@ -589,23 +588,18 @@ function XRLocomotionController({
       setVisitorPos([playerX.current, VISITOR_BODY_HEIGHT, playerZ.current]);
     }
 
-    // Apply combined position + yaw as reference space transform
     if (dx !== 0 || dz !== 0 || didSnapTurn) {
       try {
         const XRT = (window as unknown as { XRRigidTransform?: typeof XRRigidTransform }).XRRigidTransform;
         if (XRT && baseRefSpaceRef.current) {
-          // Build player matrix: rotateY(yaw) then translate(px, 0, pz)
           const playerMatrix = new THREE.Matrix4();
           playerMatrix.makeRotationY(playerYaw.current);
           playerMatrix.setPosition(playerX.current, 0, playerZ.current);
-
-          // Reference space = inverse of player matrix
           const refMatrix = playerMatrix.clone().invert();
           const pos = new THREE.Vector3();
           const quat = new THREE.Quaternion();
           const scale = new THREE.Vector3();
           refMatrix.decompose(pos, quat, scale);
-
           const transform = new XRT(
             { x: pos.x, y: pos.y, z: pos.z, w: 1 },
             { x: quat.x, y: quat.y, z: quat.z, w: quat.w }
@@ -614,12 +608,136 @@ function XRLocomotionController({
           gl.xr.setReferenceSpace(offsetSpace);
         }
       } catch (e) {
-        console.warn('XR locomotion reference space update failed:', e);
+        console.warn('XR locomotion failed:', e);
       }
     }
   });
 
   return null;
+}
+
+// Quest 3 right-controller laser ray — points, highlights, trigger selects booth
+function XRControllerRay({
+  booths,
+  onSelectBooth,
+}: {
+  booths: Booth[];
+  onSelectBooth: (booth: Booth) => void;
+}) {
+  const { gl } = useThree();
+  const beamGroupRef = useRef<THREE.Group>(null);
+  const beamMeshRef = useRef<THREE.Mesh>(null);
+  const dotRef = useRef<THREE.Mesh>(null);
+  const triggerWasDown = useRef(false);
+  const hitBoothRef = useRef<Booth | null>(null);
+
+  // Pre-compute axis-aligned bounding boxes for each booth (world space)
+  const boothBoxes = useMemo(() =>
+    booths.map(b => ({
+      booth: b,
+      box: new THREE.Box3(
+        new THREE.Vector3(b.posX - b.width / 2, 0, b.posZ - b.depth / 2),
+        new THREE.Vector3(b.posX + b.width / 2, b.height + 1.2, b.posZ + b.depth / 2)
+      )
+    })),
+    [booths]
+  );
+
+  useFrame(() => {
+    if (!gl.xr.isPresenting) {
+      if (beamGroupRef.current) beamGroupRef.current.visible = false;
+      if (dotRef.current) dotRef.current.visible = false;
+      return;
+    }
+
+    // Right controller = index 1
+    const controller = gl.xr.getController(1);
+    if (!controller) return;
+
+    const controllerPos = new THREE.Vector3();
+    const controllerQuat = new THREE.Quaternion();
+    controller.getWorldPosition(controllerPos);
+    controller.getWorldQuaternion(controllerQuat);
+
+    // Ray shoots in controller's local -Z direction
+    const rayDir = new THREE.Vector3(0, 0, -1).applyQuaternion(controllerQuat).normalize();
+
+    if (beamGroupRef.current) {
+      beamGroupRef.current.visible = true;
+      beamGroupRef.current.position.copy(controllerPos);
+      beamGroupRef.current.quaternion.copy(controllerQuat);
+    }
+
+    // Intersect ray against booth AABBs
+    const ray = new THREE.Ray(controllerPos, rayDir);
+    const target = new THREE.Vector3();
+    let closestDist = Infinity;
+    let closestHit: { booth: Booth; point: THREE.Vector3 } | null = null;
+
+    for (const { booth, box } of boothBoxes) {
+      if (ray.intersectBox(box, target)) {
+        const dist = controllerPos.distanceTo(target);
+        if (dist < closestDist) {
+          closestDist = dist;
+          closestHit = { booth, point: target.clone() };
+        }
+      }
+    }
+
+    hitBoothRef.current = closestHit?.booth ?? null;
+
+    // Update beam length & color
+    const beamLen = Math.min(closestHit ? closestDist : 10, 12);
+    if (beamMeshRef.current) {
+      beamMeshRef.current.scale.set(1, 1, beamLen);
+      beamMeshRef.current.position.set(0, 0, -beamLen / 2);
+      const mat = beamMeshRef.current.material as THREE.MeshBasicMaterial;
+      mat.color.setHex(closestHit ? 0x00e5ff : 0xffffff);
+      mat.opacity = closestHit ? 0.92 : 0.45;
+    }
+
+    // Move hit dot to intersection point
+    if (dotRef.current) {
+      if (closestHit) {
+        dotRef.current.visible = true;
+        dotRef.current.position.copy(closestHit.point);
+      } else {
+        dotRef.current.visible = false;
+      }
+    }
+
+    // Right trigger (button 0) → select hit booth
+    const session = gl.xr.getSession();
+    if (session) {
+      let trigDown = false;
+      for (const source of session.inputSources) {
+        if (source.handedness === 'right' && source.gamepad) {
+          trigDown = source.gamepad.buttons[0]?.pressed ?? false;
+        }
+      }
+      if (trigDown && !triggerWasDown.current && hitBoothRef.current) {
+        onSelectBooth(hitBoothRef.current);
+      }
+      triggerWasDown.current = trigDown;
+    }
+  });
+
+  return (
+    <>
+      {/* Laser beam — thin box in controller's -Z direction, scales to hit or 10m */}
+      <group ref={beamGroupRef} visible={false}>
+        <mesh ref={beamMeshRef}>
+          <boxGeometry args={[0.006, 0.006, 1]} />
+          <meshBasicMaterial color="#ffffff" transparent opacity={0.5} depthWrite={false} />
+        </mesh>
+      </group>
+      {/* Hit indicator dot — world-space sphere at intersection */}
+      <mesh ref={dotRef} visible={false}>
+        <sphereGeometry args={[0.055, 16, 16]} />
+        <meshBasicMaterial color="#00e5ff" />
+      </mesh>
+    </>
+  );
 }
 
 function KeyboardMovementController({
@@ -994,12 +1112,18 @@ export default function ExhibitionCanvas({
           setXrActive={setXrActive}
         />
 
-        {/* Quest 3 thumbstick locomotion + snap turn + trigger selection */}
+        {/* Quest 3: left stick walk + right stick snap turn */}
         {xrActive && (
           <XRLocomotionController
             hall={hall}
-            booths={booths}
             setVisitorPos={setVisitorPos}
+          />
+        )}
+
+        {/* Quest 3: right-controller laser ray + trigger booth selection */}
+        {xrActive && (
+          <XRControllerRay
+            booths={booths}
             onSelectBooth={onSelectBooth}
           />
         )}
