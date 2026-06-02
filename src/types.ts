@@ -4,6 +4,9 @@ export interface Hall {
   width: number; // in meters (e.g. 30)
   depth: number; // in meters (e.g. 20)
   height: number; // in meters (e.g. 6)
+  description?: string;
+  coverImageUrl?: string;
+  boothCount?: number;
   createdAt: any;
   updatedAt: any;
 }

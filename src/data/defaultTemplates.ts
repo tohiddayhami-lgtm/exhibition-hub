@@ -2,10 +2,11 @@ import { Booth, Hall } from '../types';
 
 export const DEFAULT_HALL: Hall = {
   id: 'main_hall',
-  name: 'Innovation & Trade Expo Hall A',
+  name: 'Technology & Innovation Hall A',
   width: 32,
   depth: 24,
   height: 6,
+  description: 'Cutting-edge technology, AI, robotics, and innovation brands from across the globe.',
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString()
 };
@@ -132,6 +133,30 @@ export const DEFAULT_BOOTHS: Booth[] = [
     whatsapp: '+15550190281',
     videoUrl: 'https://www.w3schools.com/html/mov_bbb.mp4',
     stylePreset: 'minimalist',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  }
+];
+
+export const DEFAULT_HALLS: Hall[] = [
+  DEFAULT_HALL,
+  {
+    id: 'hall_lifestyle',
+    name: 'Lifestyle & Retail Showcase',
+    description: 'Fashion, consumer goods, and sustainable lifestyle brands from around the globe.',
+    width: 28,
+    depth: 20,
+    height: 5.5,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  },
+  {
+    id: 'hall_enterprise',
+    name: 'Enterprise & B2B Solutions',
+    description: 'Enterprise software, cloud services, and B2B technology providers.',
+    width: 36,
+    depth: 28,
+    height: 7,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString()
   }

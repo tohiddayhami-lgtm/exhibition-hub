@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { Plus, Trash, Edit3, Settings, Save, Sparkles, FolderClosed, PhoneCall, Link2, Upload, AlertTriangle, Eye } from 'lucide-react';
+import { Plus, Trash, Edit3, Settings, Save, Sparkles, FolderClosed, PhoneCall, Link2, Upload, AlertTriangle, Eye, LayoutGrid } from 'lucide-react';
 import { Hall, Booth } from '../types';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { doc, setDoc, deleteDoc } from 'firebase/firestore';
+import { computeAutoLayout } from '../utils/autoLayout';
 
 interface AdminPanelProps {
   hall: Hall;
@@ -70,6 +71,22 @@ export default function AdminPanel({
       alert('Exhibition hall dimensions saved successfully!');
     } catch (e) {
       handleFirestoreError(e, OperationType.WRITE, docPath);
+    }
+  };
+
+  // Auto Layout — arrange booths with optimal spacing
+  const handleAutoLayout = async () => {
+    if (booths.length === 0) { alert('Add some booths first.'); return; }
+    if (!confirm(`Auto-arrange ${booths.length} booth${booths.length > 1 ? 's' : ''} with optimal spacing? Hall dimensions will be adjusted to fit.`)) return;
+    const { booths: arranged, hall: newHall } = computeAutoLayout(booths, hall);
+    try {
+      await setDoc(doc(db, 'halls', hall.id), newHall);
+      onUpdateHall(newHall);
+      await Promise.all(arranged.map(b => setDoc(doc(db, 'halls', hall.id, 'booths', b.id), b)));
+      onUpdateBooths(arranged);
+      alert(`${arranged.length} booths arranged in ${Math.ceil(Math.sqrt(arranged.length))} columns. Hall resized to ${newHall.width}m × ${newHall.depth}m.`);
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, `halls/${hall.id}`);
     }
   };
 
@@ -327,6 +344,26 @@ export default function AdminPanel({
               <Save className="w-4 h-4" />
               <span>Apply & Save Hall scale</span>
             </button>
+
+            {/* Auto Layout */}
+            <div className="border border-[#E0E4E8] rounded-md p-4 bg-[#F8F9FA]">
+              <div className="flex items-start gap-3 mb-3">
+                <LayoutGrid className="w-4 h-4 text-neutral-500 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-xs font-bold text-[#1A1D21]">Auto-Arrange All Booths</p>
+                  <p className="text-[10px] text-neutral-500 font-mono mt-0.5">
+                    Calculates optimal positions for all {booths.length} booths
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={handleAutoLayout}
+                className="w-full bg-white hover:bg-neutral-50 text-[#1A1D21] border border-[#E0E4E8] font-semibold text-xs py-2.5 px-4 rounded-md flex items-center justify-center gap-2 cursor-pointer transition-all"
+              >
+                <LayoutGrid className="w-3.5 h-3.5" />
+                <span>Auto-Arrange All Booths</span>
+              </button>
+            </div>
           </div>
         )}        {/* B. BOOTHS DIRECTORIES */}
         {activeTab === 'booth-list' && (
