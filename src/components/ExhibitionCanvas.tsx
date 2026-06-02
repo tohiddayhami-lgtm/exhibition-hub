@@ -202,7 +202,7 @@ function getYouTubeId(url: string): string | null {
   return m ? m[1] : null;
 }
 function toYouTubeEmbed(id: string) {
-  return `https://www.youtube.com/embed/${id}?autoplay=1&rel=0&modestbranding=1`;
+  return `https://www.youtube.com/embed/${id}?autoplay=1&mute=1&playsinline=1&rel=0&modestbranding=1`;
 }
 
 // ── Control button helper (3D clickable button, works in VR) ─────────────────
@@ -233,8 +233,16 @@ function LCDButton({
 
 // ── YouTube LCD — thumbnail + red play button → opens overlay/panel ───────────
 function YouTubeLCDScreen({
-  booth, ytId, onOpenMedia,
-}: { booth: Booth; ytId: string; onOpenMedia: (url: string, title: string) => void }) {
+  booth,
+  ytId,
+  isPlaying,
+  onToggleVideo,
+}: {
+  booth: Booth;
+  ytId: string;
+  isPlaying: boolean;
+  onToggleVideo: () => void;
+}) {
   const [thumbTex, setThumbTex] = useState<THREE.Texture | null>(null);
 
   useEffect(() => {
@@ -248,34 +256,45 @@ function YouTubeLCDScreen({
   const screenW = Math.min(booth.width * 0.72, 3.2);
   const screenH = screenW * (9 / 16);
   const posY = booth.height * 0.42;
-  const play = () => onOpenMedia(toYouTubeEmbed(ytId), booth.companyName);
+  const toggle = (e?: { stopPropagation: () => void }) => {
+    e?.stopPropagation();
+    onToggleVideo();
+  };
 
   return (
     <group position={[0, posY, -booth.depth / 2 + 0.22]}>
       <mesh>
         <boxGeometry args={[screenW + 0.1, screenH + 0.08, 0.06]} />
-        <meshStandardMaterial color="#0a0a0a" roughness={0.1} metalness={0.95} />
+        <meshStandardMaterial
+          color="#0a0a0a"
+          roughness={0.1}
+          metalness={0.95}
+          emissive={isPlaying ? booth.themeColor || '#0ea5e9' : '#000000'}
+          emissiveIntensity={isPlaying ? 0.35 : 0}
+        />
       </mesh>
       {/* Thumbnail */}
-      <mesh position={[0, 0, 0.04]} onClick={play}>
+      <mesh position={[0, 0, 0.04]} onClick={toggle}>
         <planeGeometry args={[screenW, screenH]} />
         {thumbTex
           ? <meshBasicMaterial map={thumbTex} />
           : <meshStandardMaterial color="#0d1117" emissive={booth.themeColor || '#111'} emissiveIntensity={0.1} />
         }
       </mesh>
-      {/* Red play circle */}
-      <mesh position={[0, 0, 0.06]} onClick={play}>
+      {/* Play / pause circle */}
+      <mesh position={[0, 0, 0.06]} onClick={toggle}>
         <circleGeometry args={[Math.min(screenW, screenH) * 0.2, 32]} />
-        <meshBasicMaterial color="#ff0000" transparent opacity={0.88} />
+        <meshBasicMaterial color={isPlaying ? '#16a34a' : '#ff0000'} transparent opacity={0.88} />
       </mesh>
-      <Text position={[0.04, 0, 0.075]} fontSize={Math.min(screenW, screenH) * 0.18} color="white" anchorX="center" anchorY="middle">{'▶'}</Text>
+      <Text position={[0.04, 0, 0.075]} fontSize={Math.min(screenW, screenH) * 0.18} color="white" anchorX="center" anchorY="middle">
+        {isPlaying ? 'Ⅱ' : '▶'}
+      </Text>
       <Text position={[0, -(screenH * 0.4), 0.06]} fontSize={0.085} color="#94a3b8" anchorX="center" anchorY="middle">
-        {'Tap to play on YouTube'}
+        {isPlaying ? 'Tap LCD again to pause' : 'Tap LCD to play YouTube'}
       </Text>
       <mesh position={[0, 0, -0.01]}>
         <planeGeometry args={[screenW + 0.06, screenH + 0.05]} />
-        <meshBasicMaterial color={booth.themeColor || '#334155'} transparent opacity={0.2} />
+        <meshBasicMaterial color={isPlaying ? '#16a34a' : booth.themeColor || '#334155'} transparent opacity={isPlaying ? 0.35 : 0.2} />
       </mesh>
     </group>
   );
@@ -402,8 +421,14 @@ function DirectVideoLCDScreen({ booth }: { booth: Booth }) {
 
 // ── VideoLCDScreen — routes to YouTube or direct video player ─────────────────
 function VideoLCDScreen({
-  booth, onOpenMedia,
-}: { booth: Booth; onOpenMedia: (url: string, title: string) => void }) {
+  booth,
+  isYoutubePlaying,
+  onToggleYoutubeVideo,
+}: {
+  booth: Booth;
+  isYoutubePlaying: boolean;
+  onToggleYoutubeVideo: () => void;
+}) {
   const url = booth.videoUrl;
 
   if (!url) {
@@ -413,7 +438,14 @@ function VideoLCDScreen({
 
   const ytId = getYouTubeId(url);
   if (ytId) {
-    return <YouTubeLCDScreen booth={booth} ytId={ytId} onOpenMedia={onOpenMedia} />;
+    return (
+      <YouTubeLCDScreen
+        booth={booth}
+        ytId={ytId}
+        isPlaying={isYoutubePlaying}
+        onToggleVideo={onToggleYoutubeVideo}
+      />
+    );
   }
 
   return <DirectVideoLCDScreen booth={booth} />;
@@ -481,14 +513,19 @@ function BoothStructure({
   booth,
   active,
   onSelect,
-  onOpenMedia,
+  onOpenLink,
+  isYoutubePlaying,
+  onToggleYoutubeVideo,
 }: {
   booth: Booth;
   active: boolean;
   onSelect: () => void;
-  onOpenMedia: (url: string, title: string) => void;
+  onOpenLink: (url: string, title: string) => void;
+  isYoutubePlaying: boolean;
+  onToggleYoutubeVideo: (booth: Booth) => void;
 }) {
   const [hovered, setHovered] = useState(false);
+  const [infoHovered, setInfoHovered] = useState(false);
 
   useEffect(() => {
     document.body.style.cursor = hovered ? 'pointer' : 'auto';
@@ -501,7 +538,6 @@ function BoothStructure({
   return (
     <group
       position={[booth.posX, 0, booth.posZ]}
-      onClick={(e) => { e.stopPropagation(); onSelect(); }}
       onPointerOver={(e) => { e.stopPropagation(); setHovered(true); }}
       onPointerOut={() => setHovered(false)}
     >
@@ -621,21 +657,50 @@ function BoothStructure({
           <boxGeometry args={[0.98, 0.055, 0.56]} />
           <meshStandardMaterial color={col} roughness={0.08} metalness={0.7} />
         </mesh>
-        <Text
+        <group
           position={[0, 0.66, 0.13]}
-          fontSize={0.065}
-          color="#e8c85a"
-          anchorX="center"
-          anchorY="middle"
-          outlineWidth={0.002}
-          outlineColor="#000"
+          onClick={(e) => {
+            e.stopPropagation();
+            if (booth.websiteUrl) {
+              onOpenLink(booth.websiteUrl, booth.companyName);
+            }
+          }}
+          onPointerOver={(e) => {
+            e.stopPropagation();
+            setInfoHovered(true);
+          }}
+          onPointerOut={() => setInfoHovered(false)}
         >
-          INFO
-        </Text>
+          <mesh position={[0, 0, -0.004]}>
+            <planeGeometry args={[0.42, 0.16]} />
+            <meshStandardMaterial
+              color={infoHovered ? '#facc15' : '#111827'}
+              emissive={infoHovered ? '#facc15' : col}
+              emissiveIntensity={infoHovered ? 0.45 : 0.16}
+              roughness={0.15}
+              metalness={0.65}
+            />
+          </mesh>
+          <Text
+            position={[0, 0, 0.004]}
+            fontSize={0.065}
+            color={infoHovered ? '#111827' : '#e8c85a'}
+            anchorX="center"
+            anchorY="middle"
+            outlineWidth={0.002}
+            outlineColor="#000"
+          >
+            INFO
+          </Text>
+        </group>
       </group>
 
       {/* 7. LCD SCREEN — video/image texture on back wall */}
-      <VideoLCDScreen booth={booth} onOpenMedia={onOpenMedia} />
+      <VideoLCDScreen
+        booth={booth}
+        isYoutubePlaying={isYoutubePlaying}
+        onToggleYoutubeVideo={() => onToggleYoutubeVideo(booth)}
+      />
 
       {/* 8. PRODUCT DISPLAY */}
       <group position={[0, 0.05, 0]}>
@@ -701,7 +766,9 @@ function BoothStructure({
 // With 100 booths, without memo every camera/visitor move would re-render all 100.
 // onOpenMedia is stable (useCallback in ExhibitionCanvas), so excluded from comparison
 const MemoBoothStructure = React.memo(BoothStructure, (prev, next) =>
-  prev.active === next.active && prev.booth === next.booth
+  prev.active === next.active &&
+  prev.booth === next.booth &&
+  prev.isYoutubePlaying === next.isYoutubePlaying
 );
 
 // Frame core to handle smoothly interpolating camera and controls states
@@ -862,15 +929,15 @@ function XRLocomotionController({
 function XRInteractionSystem({
   booths,
   selectedBooth,
-  onSelectBooth,
   onCloseBooth,
   onOpenOverlay,
+  onToggleYoutubeVideo,
 }: {
   booths: Booth[];
   selectedBooth: Booth | null;
-  onSelectBooth: (booth: Booth) => void;
   onCloseBooth: () => void;
   onOpenOverlay: (url: string, title: string) => void;
+  onToggleYoutubeVideo: (booth: Booth) => void;
 }) {
   const { gl } = useThree();
 
@@ -880,7 +947,6 @@ function XRInteractionSystem({
   const dotRef       = useRef<THREE.Mesh>(null);
 
   // Panel interactive button mesh refs (world-space, Billboard-rotated)
-  const websiteBtnRef   = useRef<THREE.Mesh>(null);
   const whatsappBtnRef  = useRef<THREE.Mesh>(null);
   const catalogBtnRef   = useRef<THREE.Mesh>(null);
   const closeBtnRef     = useRef<THREE.Mesh>(null);
@@ -889,15 +955,51 @@ function XRInteractionSystem({
   const hitActionRef    = useRef<(() => void) | null>(null);
   const raycasterRef    = useRef(new THREE.Raycaster());
 
-  // Booth AABBs (world-space, axis-aligned)
-  const boothBoxes = useMemo(() =>
-    booths.map(b => ({
-      booth: b,
-      box: new THREE.Box3(
-        new THREE.Vector3(b.posX - b.width / 2, 0,          b.posZ - b.depth / 2),
-        new THREE.Vector3(b.posX + b.width / 2, b.height + 1.2, b.posZ + b.depth / 2)
-      ),
-    })),
+  // Only the counter INFO plate and the LCD are interactive in XR.
+  const boothHitZones = useMemo(() =>
+    booths.flatMap((booth) => {
+      const screenW = Math.min(booth.width * 0.72, 3.2);
+      const screenH = screenW * (9 / 16);
+      const lcdCenter = new THREE.Vector3(
+        booth.posX,
+        booth.height * 0.42,
+        booth.posZ - booth.depth / 2 + 0.22
+      );
+      const infoCenter = new THREE.Vector3(
+        booth.posX + booth.width / 3.2,
+        1.11,
+        booth.posZ + booth.depth / 4.2 + 0.13
+      );
+      const zones: {
+        booth: Booth;
+        kind: 'info' | 'youtube';
+        box: THREE.Box3;
+      }[] = [];
+
+      if (booth.websiteUrl) {
+        zones.push({
+          booth,
+          kind: 'info',
+          box: new THREE.Box3(
+            new THREE.Vector3(infoCenter.x - 0.35, infoCenter.y - 0.2, infoCenter.z - 0.12),
+            new THREE.Vector3(infoCenter.x + 0.35, infoCenter.y + 0.2, infoCenter.z + 0.12)
+          ),
+        });
+      }
+
+      if (getYouTubeId(booth.videoUrl || '')) {
+        zones.push({
+          booth,
+          kind: 'youtube',
+          box: new THREE.Box3(
+            new THREE.Vector3(lcdCenter.x - screenW / 2, lcdCenter.y - screenH / 2, lcdCenter.z - 0.12),
+            new THREE.Vector3(lcdCenter.x + screenW / 2, lcdCenter.y + screenH / 2, lcdCenter.z + 0.12)
+          ),
+        });
+      }
+
+      return zones;
+    }),
     [booths]
   );
 
@@ -937,8 +1039,6 @@ function XRInteractionSystem({
       const waLink = `https://api.whatsapp.com/send?phone=${wa}&text=Hello+${encodeURIComponent(selectedBooth.companyName)},+I+am+at+your+virtual+booth.`;
 
       const panelButtons: { mesh: THREE.Mesh | null; action: () => void }[] = [
-        // Open website inside VR overlay instead of window.open
-        { mesh: websiteBtnRef.current,  action: () => onOpenOverlay(selectedBooth.websiteUrl || 'https://example.com', selectedBooth.companyName) },
         // WhatsApp opens in a new Quest browser tab (no inline option for messaging apps)
         { mesh: whatsappBtnRef.current, action: () => window.open(waLink, '_blank') },
         // Catalog opens inside VR overlay
@@ -959,15 +1059,17 @@ function XRInteractionSystem({
       }
     }
 
-    // ── When panel is CLOSED: test booth AABBs
+    // ── When panel is CLOSED: test only INFO/link and LCD/video zones
     if (!selectedBooth) {
-      for (const { booth, box } of boothBoxes) {
+      for (const { booth, kind, box } of boothHitZones) {
         if (ray.intersectBox(box, aabbTarget)) {
           const dist = cPos.distanceTo(aabbTarget);
           if (dist < closestDist) {
             closestDist = dist;
             closestPoint = aabbTarget.clone();
-            hitActionRef.current = () => onSelectBooth(booth);
+            hitActionRef.current = kind === 'info'
+              ? () => onOpenOverlay(booth.websiteUrl, booth.companyName)
+              : () => onToggleYoutubeVideo(booth);
           }
         }
       }
@@ -1097,34 +1199,25 @@ function XRInteractionSystem({
             {(booth.description || 'Welcome to our virtual exhibition stand. We are happy to connect with you.').substring(0, 200)}
           </Text>
 
-          {/* ── WEBSITE BUTTON (opens inside VR overlay) */}
-          <mesh ref={websiteBtnRef} position={[booth.catalogUrl ? -1.0 : -0.6, -PH / 2 + 0.3, 0.01]}>
-            <planeGeometry args={[booth.catalogUrl ? 0.6 : 0.92, 0.38]} />
-            <meshStandardMaterial color="#1d4ed8" emissive="#1d4ed8" emissiveIntensity={0.4} roughness={0.05} metalness={0.7} />
-          </mesh>
-          <Text position={[booth.catalogUrl ? -1.0 : -0.6, -PH / 2 + 0.3, 0.018]} fontSize={0.095} color="white" anchorX="center" anchorY="middle" outlineWidth={0.003} outlineColor="#000">
-            Website
-          </Text>
-
           {/* ── CATALOG BUTTON (only if catalogUrl exists) */}
           {booth.catalogUrl && (
             <>
-              <mesh ref={catalogBtnRef} position={[-0.3, -PH / 2 + 0.3, 0.01]}>
-                <planeGeometry args={[0.6, 0.38]} />
+              <mesh ref={catalogBtnRef} position={[-0.55, -PH / 2 + 0.3, 0.01]}>
+                <planeGeometry args={[0.78, 0.38]} />
                 <meshStandardMaterial color="#7c3aed" emissive="#7c3aed" emissiveIntensity={0.4} roughness={0.05} metalness={0.7} />
               </mesh>
-              <Text position={[-0.3, -PH / 2 + 0.3, 0.018]} fontSize={0.095} color="white" anchorX="center" anchorY="middle" outlineWidth={0.003} outlineColor="#000">
+              <Text position={[-0.55, -PH / 2 + 0.3, 0.018]} fontSize={0.095} color="white" anchorX="center" anchorY="middle" outlineWidth={0.003} outlineColor="#000">
                 Catalog
               </Text>
             </>
           )}
 
           {/* ── WHATSAPP BUTTON */}
-          <mesh ref={whatsappBtnRef} position={[0.6, -PH / 2 + 0.3, 0.01]}>
+          <mesh ref={whatsappBtnRef} position={[booth.catalogUrl ? 0.55 : 0, -PH / 2 + 0.3, 0.01]}>
             <planeGeometry args={[0.92, 0.38]} />
             <meshStandardMaterial color="#15803d" emissive="#15803d" emissiveIntensity={0.4} roughness={0.05} metalness={0.7} />
           </mesh>
-          <Text position={[0.6, -PH / 2 + 0.3, 0.018]} fontSize={0.105} color="white" anchorX="center" anchorY="middle" outlineWidth={0.003} outlineColor="#000">
+          <Text position={[booth.catalogUrl ? 0.55 : 0, -PH / 2 + 0.3, 0.018]} fontSize={0.105} color="white" anchorX="center" anchorY="middle" outlineWidth={0.003} outlineColor="#000">
             WhatsApp
           </Text>
 
@@ -1391,6 +1484,68 @@ function VRBrowserPanel({ url, title, onClose }: { url: string; title: string; o
   const [iframeError, setIframeError] = useState(false);
   const isVideo = /\.(mp4|webm|ogg)(\?|$)/i.test(url);
   const isPdf   = /\.(pdf)(\?|$)/i.test(url) || url.includes('drive.google.com');
+  const isYouTube = url.includes('youtube.com/embed/');
+
+  if (isYouTube) {
+    return (
+      <div style={{
+        position: 'fixed',
+        right: 24,
+        bottom: 24,
+        zIndex: 99999,
+        width: 'min(560px, 46vw)',
+        background: 'rgba(8,9,13,0.96)',
+        border: '1px solid #1e2a3a',
+        borderRadius: 14,
+        overflow: 'hidden',
+        boxShadow: '0 24px 80px rgba(0,0,0,0.45)',
+        fontFamily: 'system-ui, sans-serif',
+      }}>
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          padding: '9px 12px',
+          background: '#0d111a',
+          borderBottom: '1px solid #1e2a3a',
+        }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <p style={{ margin: 0, fontSize: 10, color: '#ef4444', fontFamily: 'monospace', textTransform: 'uppercase', letterSpacing: 2 }}>
+              YouTube LCD Playing
+            </p>
+            <p style={{ margin: 0, fontSize: 12, fontWeight: 700, color: '#e2e8f0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {title}
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            style={{
+              padding: '7px 12px',
+              borderRadius: 8,
+              background: '#7f1d1d',
+              border: '1px solid #991b1b',
+              color: '#fecaca',
+              fontSize: 11,
+              fontFamily: 'monospace',
+              fontWeight: 700,
+              cursor: 'pointer',
+            }}
+          >
+            Pause
+          </button>
+        </div>
+        <div style={{ position: 'relative', width: '100%', aspectRatio: '16 / 9', background: '#000' }}>
+          <iframe
+            src={url}
+            title={title}
+            allow="autoplay; encrypted-media; picture-in-picture"
+            allowFullScreen
+            style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
+          />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{
@@ -1523,6 +1678,7 @@ export default function ExhibitionCanvas({
   const [teleportTarget, setTeleportTarget] = useState<[number, number, number] | null>(null);
   const [povEnabled, setPovEnabled] = useState(false);
   const [xrActive, setXrActive] = useState(false);
+  const [activeYoutubeBoothId, setActiveYoutubeBoothId] = useState<string | null>(null);
 
   // VR Browser Overlay state
   const vrOverlayRef  = useRef<HTMLDivElement | null>(null);
@@ -1530,8 +1686,25 @@ export default function ExhibitionCanvas({
   const [vrOverlayTitle, setVrOverlayTitle] = useState('');
 
   const handleOpenOverlay = useCallback((url: string, title: string) => {
+    setActiveYoutubeBoothId(null);
     setVrOverlayUrl(url);
     setVrOverlayTitle(title);
+  }, []);
+
+  const handleToggleYoutubeVideo = useCallback((booth: Booth) => {
+    const ytId = getYouTubeId(booth.videoUrl || '');
+    if (!ytId) return;
+
+    setActiveYoutubeBoothId((currentBoothId) => {
+      if (currentBoothId === booth.id) {
+        setVrOverlayUrl(null);
+        return null;
+      }
+
+      setVrOverlayUrl(toYouTubeEmbed(ytId));
+      setVrOverlayTitle(`${booth.companyName} - YouTube`);
+      return booth.id;
+    });
   }, []);
 
   // Walk on floor click trigger
@@ -1571,7 +1744,10 @@ export default function ExhibitionCanvas({
         <VRBrowserPanel
           url={vrOverlayUrl}
           title={vrOverlayTitle}
-          onClose={() => setVrOverlayUrl(null)}
+          onClose={() => {
+            setVrOverlayUrl(null);
+            setActiveYoutubeBoothId(null);
+          }}
         />,
         vrOverlayRef.current
       )}
@@ -1640,7 +1816,9 @@ export default function ExhibitionCanvas({
               booth={booth}
               active={activeBoothId === booth.id}
               onSelect={() => onSelectBooth(booth)}
-              onOpenMedia={handleOpenOverlay}
+              onOpenLink={handleOpenOverlay}
+              isYoutubePlaying={activeYoutubeBoothId === booth.id}
+              onToggleYoutubeVideo={handleToggleYoutubeVideo}
             />
           ))}
         </Suspense>
@@ -1683,9 +1861,9 @@ export default function ExhibitionCanvas({
           <XRInteractionSystem
             booths={booths}
             selectedBooth={activeBoothId ? (booths.find(b => b.id === activeBoothId) ?? null) : null}
-            onSelectBooth={onSelectBooth}
             onCloseBooth={onCloseBooth}
             onOpenOverlay={handleOpenOverlay}
+            onToggleYoutubeVideo={handleToggleYoutubeVideo}
           />
         )}
 

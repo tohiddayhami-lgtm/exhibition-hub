@@ -741,13 +741,13 @@ export default function AdminPanel({
                   </div>
                   <div>
                     <label className="block text-[10px] font-mono text-neutral-450 uppercase mb-1 font-bold">
-                      LCD Screen Video URL <span className="text-neutral-400 normal-case">(MP4 — پخش روی صفحه غرفه)</span>
+                      LCD Screen Video URL <span className="text-neutral-400 normal-case">(YouTube یا MP4 — پخش روی صفحه غرفه)</span>
                     </label>
                     <input
                       type="url"
                       value={bVideo}
                       onChange={(e) => setBVideo(e.target.value)}
-                      placeholder="https://example.com/video.mp4"
+                      placeholder="https://www.youtube.com/watch?v=... یا https://example.com/video.mp4"
                       className="w-full bg-white border border-[#E0E4E8] rounded p-2 text-[#1A1D21] focus:outline-none"
                     />
                   </div>
