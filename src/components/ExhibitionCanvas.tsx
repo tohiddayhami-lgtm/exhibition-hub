@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useState, Suspense } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { OrbitControls, Html, useGLTF, PointerLockControls } from '@react-three/drei';
+import { OrbitControls, Html, useGLTF, PointerLockControls, Text, Billboard } from '@react-three/drei';
 import * as THREE from 'three';
 import { Hall, Booth } from '../types';
 import { Eye, Glasses } from 'lucide-react';
@@ -106,9 +106,9 @@ function PlaceholderProductStyle({ themeColor, style }: { themeColor?: string, s
   }
 }
 
-// Concrete floor layout exhibiting clean tile patterns
-function GroundPlane({ hall, onFloorClick, teleportTarget }: { 
-  hall: Hall; 
+// Professional exhibition floor with marble tiles and decorative borders
+function GroundPlane({ hall, onFloorClick, teleportTarget }: {
+  hall: Hall;
   onFloorClick: (point: THREE.Vector3) => void;
   teleportTarget: [number, number, number] | null;
 }) {
@@ -122,45 +122,68 @@ function GroundPlane({ hall, onFloorClick, teleportTarget }: {
 
   return (
     <group>
-      {/* Visual Tiled Ground (Polished Dark Concrete Style) */}
-      <mesh 
-        rotation={[-Math.PI / 2, 0, 0]} 
-        position={[0, -0.01, 0]} 
+      {/* Outer floor (dark surround outside hall) */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.02, 0]} receiveShadow>
+        <planeGeometry args={[hall.width + 40, hall.depth + 40]} />
+        <meshStandardMaterial color="#1a1c1e" roughness={0.8} metalness={0.1} />
+      </mesh>
+
+      {/* Main exhibition hall floor — polished light marble */}
+      <mesh
+        rotation={[-Math.PI / 2, 0, 0]}
+        position={[0, -0.005, 0]}
         receiveShadow
         onClick={(e) => {
           e.stopPropagation();
           if (e.point) onFloorClick(e.point);
         }}
       >
-        <planeGeometry args={[hall.width + 40, hall.depth + 40]} />
-        <meshStandardMaterial 
-          color="#161819" 
-          roughness={0.45} 
-          metalness={0.2} 
+        <planeGeometry args={[hall.width, hall.depth]} />
+        <meshStandardMaterial
+          color="#e8e4de"
+          roughness={0.08}
+          metalness={0.05}
+          envMapIntensity={0.4}
         />
       </mesh>
 
-      {/* Grid Guide Overlay for structural alignment */}
-      <gridHelper 
-        args={[Math.max(hall.width, hall.depth) + 12, Math.max(hall.width, hall.depth) + 12, '#353a3c', '#222526']} 
-        position={[0, 0.001, 0]} 
+      {/* Floor tile grid lines (light stone grout) */}
+      <gridHelper
+        args={[Math.max(hall.width, hall.depth), Math.max(hall.width, hall.depth) * 2, '#c8c4be', '#d4d0ca']}
+        position={[0, 0.001, 0]}
       />
 
-      {/* Safety Hall Border line */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.005, 0]}>
-        <planeGeometry args={[hall.width, hall.depth]} />
-        <meshBasicMaterial color="#1f2937" wireframe />
+      {/* Decorative carpet runner — center aisle */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.003, 0]}>
+        <planeGeometry args={[2.5, hall.depth * 0.88]} />
+        <meshStandardMaterial color="#1a2744" roughness={0.85} metalness={0} />
       </mesh>
 
-      {/* Interactive Teleport indicator portal rings */}
+      {/* Gold trim borders along carpet edges */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[-1.3, 0.004, 0]}>
+        <planeGeometry args={[0.08, hall.depth * 0.88]} />
+        <meshStandardMaterial color="#c9a84c" roughness={0.2} metalness={0.8} />
+      </mesh>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[1.3, 0.004, 0]}>
+        <planeGeometry args={[0.08, hall.depth * 0.88]} />
+        <meshStandardMaterial color="#c9a84c" roughness={0.2} metalness={0.8} />
+      </mesh>
+
+      {/* Hall border gold trim */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.002, 0]}>
+        <planeGeometry args={[hall.width, hall.depth]} />
+        <meshBasicMaterial color="#b09a5a" wireframe />
+      </mesh>
+
+      {/* Interactive teleport indicator portal ring */}
       {teleportTarget && (
-        <mesh 
+        <mesh
           ref={ringRef}
-          rotation={[-Math.PI / 2, 0, 0]} 
+          rotation={[-Math.PI / 2, 0, 0]}
           position={[teleportTarget[0], 0.015, teleportTarget[2]]}
         >
           <ringGeometry args={[0.4, 0.5, 32]} />
-          <meshBasicMaterial color="#38bdf8" side={THREE.DoubleSide} transparent opacity={0.8} />
+          <meshBasicMaterial color="#38bdf8" side={THREE.DoubleSide} transparent opacity={0.9} />
         </mesh>
       )}
     </group>
@@ -303,49 +326,43 @@ function BoothStructure({
         <meshStandardMaterial color="#1a1a1a" roughness={0.1} metalness={0.9} />
       </mesh>
 
-      {/* 5. GENTLE BILLBOARD HEADER WITH GLASSY LOOK */}
+      {/* 5. SIGNBOARD — WebGL Text so it renders inside the VR headset */}
       <group position={[0, booth.height - 0.5, booth.depth / 2 - 0.05]}>
-        {/* Glass plate */}
+        {/* Dark glass backing plate */}
         <mesh>
-          <boxGeometry args={[booth.width * 0.8, 0.5, 0.05]} />
-          <meshStandardMaterial 
-            color="#222" 
-            roughness={0.01} 
-            metalness={0.95} 
-            transparent 
-            opacity={0.88} 
-          />
+          <boxGeometry args={[booth.width * 0.85, 0.55, 0.05]} />
+          <meshStandardMaterial color="#111" roughness={0.01} metalness={0.95} transparent opacity={0.9} />
         </mesh>
-        
-        {/* Signboard front thin trim */}
-        <mesh position={[0, 0, 0.03]}>
-          <boxGeometry args={[booth.width * 0.82, 0.04, 0.01]} />
-          <meshStandardMaterial color={colColor} emissive={colColor} emissiveIntensity={0.1} />
+        {/* Colored accent trim */}
+        <mesh position={[0, 0, 0.032]}>
+          <boxGeometry args={[booth.width * 0.87, 0.04, 0.01]} />
+          <meshStandardMaterial color={colColor} emissive={colColor} emissiveIntensity={0.4} />
         </mesh>
-
-        {/* Dynamic Overhead Signboard HTML Render */}
-        <Html 
-          position={[0, 0, 0.06]} 
-          center 
-          distanceFactor={6} 
-          transform 
-          occlude
+        {/* Booth number badge */}
+        <Text
+          position={[-(booth.width * 0.3), 0, 0.04]}
+          fontSize={0.11}
+          color={colColor}
+          anchorX="center"
+          anchorY="middle"
+          outlineWidth={0.004}
+          outlineColor="#000"
         >
-          <div className="flex items-center gap-3 bg-neutral-950/90 text-white px-5 py-2.5 rounded-lg border border-neutral-800 whitespace-nowrap shadow-xl">
-            <span className="bg-white text-neutral-950 text-[10px] font-mono tracking-widest font-black uppercase px-2 py-0.5 rounded shadow">
-              {booth.boothNumber}
-            </span>
-            <span className="text-sm font-sans font-extrabold tracking-tight">
-              {booth.companyName}
-            </span>
-            {active && (
-              <span className="flex h-2 w-2 relative">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-cyan-500"></span>
-              </span>
-            )}
-          </div>
-        </Html>
+          {`[${booth.boothNumber}]`}
+        </Text>
+        {/* Company name */}
+        <Text
+          position={[booth.width * 0.08, 0, 0.04]}
+          fontSize={0.13}
+          color="white"
+          anchorX="center"
+          anchorY="middle"
+          maxWidth={booth.width * 0.55}
+          outlineWidth={0.005}
+          outlineColor="#000"
+        >
+          {booth.companyName}
+        </Text>
       </group>
 
       {/* 6. FRONT COMMERCIAL RECEPTION DESK / INFORMATION COUNTER */}
@@ -360,18 +377,18 @@ function BoothStructure({
           <boxGeometry args={[1.0, 0.06, 0.58]} />
           <meshStandardMaterial color={colColor} roughness={0.1} />
         </mesh>
-        {/* Small desktop sign */}
-        <Html 
-          position={[0, 0.65, 0.1]} 
-          center 
-          distanceFactor={4} 
-          transform 
-          occlude
+        {/* Small desk sign (WebGL text) */}
+        <Text
+          position={[0, 0.65, 0.12]}
+          fontSize={0.07}
+          color="#c9a84c"
+          anchorX="center"
+          anchorY="middle"
+          outlineWidth={0.003}
+          outlineColor="#000"
         >
-          <div className="bg-neutral-950 text-[8px] font-mono border border-neutral-800 text-white px-2 py-0.5 rounded opacity-90">
-            INFO PARTNER
-          </div>
-        </Html>
+          INFO
+        </Text>
       </group>
 
       {/* 7. DISPLAY CORE: Render custom GLB model OR Fallback stylized 3D showroom shapes */}
@@ -385,25 +402,34 @@ function BoothStructure({
         )}
       </group>
 
-      {/* Floating Sparkle Sign / Interaction Portal Halo */}
-      <group position={[0, 1.8, 0]}>
-        <Html center distanceFactor={8}>
-          <button 
-            id={`open-booth-trigger-${booth.id}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              onSelect();
-            }}
-            className={`flex items-center gap-1.5 backdrop-blur-md border px-2.5 py-1 rounded-full text-[10px] font-mono tracking-widest uppercase transition-all shadow-xl font-bold cursor-pointer hover:scale-105 ${
-              hovered || active 
-                ? 'bg-white text-neutral-950 border-white' 
-                : 'bg-neutral-950/80 text-neutral-300 border-neutral-700'
-            }`}
-          >
-            <span>Exhibition Stand</span>
-          </button>
-        </Html>
-      </group>
+      {/* Floating company name — Billboard so it always faces the visitor, visible in VR */}
+      <Billboard position={[0, booth.height + 0.55, 0]}>
+        {/* Background card */}
+        <mesh onClick={(e) => { e.stopPropagation(); onSelect(); }}>
+          <planeGeometry args={[booth.width * 0.75, 0.38]} />
+          <meshStandardMaterial
+            color={active ? colColor : '#111827'}
+            transparent
+            opacity={0.88}
+            roughness={0.1}
+            metalness={0.5}
+          />
+        </mesh>
+        {/* Company name text */}
+        <Text
+          position={[0, 0, 0.02]}
+          fontSize={0.15}
+          color={active ? '#000' : 'white'}
+          anchorX="center"
+          anchorY="middle"
+          maxWidth={booth.width * 0.7}
+          outlineWidth={0.004}
+          outlineColor={active ? '#fff' : '#000'}
+          onClick={(e) => { e.stopPropagation(); onSelect(); }}
+        >
+          {booth.companyName}
+        </Text>
+      </Billboard>
     </group>
   );
 }
@@ -455,28 +481,38 @@ function SceneCameraController({ visitorPos, teleportTarget, setTeleportTarget, 
   return null;
 }
 
-// Quest 3 / WebXR controller thumbstick locomotion
-function XRLocomotionController({ hall, setVisitorPos }: {
+// Quest 3 / WebXR controller locomotion: left stick walk, right stick snap-turn, right trigger select
+function XRLocomotionController({
+  hall,
+  booths,
+  setVisitorPos,
+  onSelectBooth,
+}: {
   hall: Hall;
+  booths: Booth[];
   setVisitorPos: (pos: [number, number, number]) => void;
+  onSelectBooth: (booth: Booth) => void;
 }) {
   const { gl, camera } = useThree();
   const baseRefSpaceRef = useRef<XRReferenceSpace | null>(null);
   const playerX = useRef(0);
   const playerZ = useRef(0);
+  const playerYaw = useRef(0);        // accumulated snap-turn yaw (radians)
+  const snapLocked = useRef(false);   // prevent rapid repeated snaps
+  const triggerWasPressed = useRef(false);
 
   useFrame((_, delta) => {
     if (!gl.xr.isPresenting) {
-      // Reset accumulated position when VR session ends
       if (baseRefSpaceRef.current) {
         baseRefSpaceRef.current = null;
         playerX.current = 0;
         playerZ.current = 0;
+        playerYaw.current = 0;
       }
       return;
     }
 
-    // Capture the base reference space once per session (before any locomotion offsets)
+    // Capture base reference space once per session (before any locomotion offsets)
     if (!baseRefSpaceRef.current) {
       const refSpace = gl.xr.getReferenceSpace();
       if (!refSpace) return;
@@ -489,50 +525,98 @@ function XRLocomotionController({ hall, setVisitorPos }: {
     let dx = 0;
     let dz = 0;
     const speed = 3.0 * Math.min(delta, 0.05);
+    let didSnapTurn = false;
+    let triggerPressed = false;
 
-    // Read left thumbstick from Quest controllers for smooth locomotion
     for (const source of session.inputSources) {
-      if (!source.gamepad || source.handedness !== 'left') continue;
+      if (!source.gamepad) continue;
       const axes = source.gamepad.axes;
-      // Quest controllers: axes[2] = thumbstick X, axes[3] = thumbstick Y
-      const thumbX = axes.length >= 4 ? axes[2] : 0;
-      const thumbY = axes.length >= 4 ? axes[3] : 0;
 
-      if (Math.abs(thumbX) > 0.15 || Math.abs(thumbY) > 0.15) {
-        const forward = new THREE.Vector3();
-        camera.getWorldDirection(forward);
-        forward.y = 0;
-        if (forward.lengthSq() < 0.001) forward.set(0, 0, -1);
-        forward.normalize();
-        const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+      if (source.handedness === 'left') {
+        // Left thumbstick → smooth locomotion relative to headset direction
+        const thumbX = axes.length >= 4 ? axes[2] : 0;
+        const thumbY = axes.length >= 4 ? axes[3] : 0;
+        if (Math.abs(thumbX) > 0.15 || Math.abs(thumbY) > 0.15) {
+          const forward = new THREE.Vector3();
+          camera.getWorldDirection(forward);
+          forward.y = 0;
+          if (forward.lengthSq() < 0.001) forward.set(0, 0, -1);
+          forward.normalize();
+          const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+          // thumbY negative = pushed forward = move forward
+          dx += (forward.x * -thumbY + right.x * thumbX) * speed;
+          dz += (forward.z * -thumbY + right.z * thumbX) * speed;
+        }
+      }
 
-        // thumbY is negative when pushed forward → negate to walk forward
-        dx += (forward.x * -thumbY + right.x * thumbX) * speed;
-        dz += (forward.z * -thumbY + right.z * thumbX) * speed;
+      if (source.handedness === 'right') {
+        // Right thumbstick X → 45° snap turn
+        const turnX = axes.length >= 4 ? axes[2] : 0;
+        if (Math.abs(turnX) > 0.65 && !snapLocked.current) {
+          playerYaw.current += turnX > 0 ? -Math.PI / 4 : Math.PI / 4;
+          snapLocked.current = true;
+          didSnapTurn = true;
+        } else if (Math.abs(turnX) < 0.3) {
+          snapLocked.current = false;
+        }
+
+        // Right index trigger (button index 0) → select nearest booth within reach
+        const trigger = source.gamepad.buttons[0];
+        if (trigger?.pressed) triggerPressed = true;
       }
     }
 
-    if (dx === 0 && dz === 0) return;
-
-    const halfW = hall.width / 2 - 2;
-    const halfD = hall.depth / 2 - 2;
-    playerX.current = Math.max(-halfW, Math.min(halfW, playerX.current + dx));
-    playerZ.current = Math.max(-halfD, Math.min(halfD, playerZ.current + dz));
-
-    // Move the XR reference space so the virtual world shifts under the player
-    // We always offset from the captured base space to avoid compounding transforms
-    try {
-      const XRT = (window as unknown as { XRRigidTransform?: typeof XRRigidTransform }).XRRigidTransform;
-      if (XRT && baseRefSpaceRef.current) {
-        const transform = new XRT({ x: -playerX.current, y: 0, z: -playerZ.current, w: 1 });
-        const offsetSpace = baseRefSpaceRef.current.getOffsetReferenceSpace(transform);
-        gl.xr.setReferenceSpace(offsetSpace);
+    // Trigger: select closest booth within 5 m
+    if (triggerPressed && !triggerWasPressed.current) {
+      let closest: Booth | null = null;
+      let minDist = 5;
+      for (const booth of booths) {
+        const ddx = booth.posX - playerX.current;
+        const ddz = booth.posZ - playerZ.current;
+        const dist = Math.sqrt(ddx * ddx + ddz * ddz);
+        if (dist < minDist) { minDist = dist; closest = booth; }
       }
-    } catch (e) {
-      console.warn('XR locomotion reference space update failed:', e);
+      if (closest) onSelectBooth(closest);
+    }
+    triggerWasPressed.current = triggerPressed;
+
+    // Update position
+    if (dx !== 0 || dz !== 0) {
+      const halfW = hall.width / 2 - 2;
+      const halfD = hall.depth / 2 - 2;
+      playerX.current = Math.max(-halfW, Math.min(halfW, playerX.current + dx));
+      playerZ.current = Math.max(-halfD, Math.min(halfD, playerZ.current + dz));
+      setVisitorPos([playerX.current, VISITOR_BODY_HEIGHT, playerZ.current]);
     }
 
-    setVisitorPos([playerX.current, VISITOR_BODY_HEIGHT, playerZ.current]);
+    // Apply combined position + yaw as reference space transform
+    if (dx !== 0 || dz !== 0 || didSnapTurn) {
+      try {
+        const XRT = (window as unknown as { XRRigidTransform?: typeof XRRigidTransform }).XRRigidTransform;
+        if (XRT && baseRefSpaceRef.current) {
+          // Build player matrix: rotateY(yaw) then translate(px, 0, pz)
+          const playerMatrix = new THREE.Matrix4();
+          playerMatrix.makeRotationY(playerYaw.current);
+          playerMatrix.setPosition(playerX.current, 0, playerZ.current);
+
+          // Reference space = inverse of player matrix
+          const refMatrix = playerMatrix.clone().invert();
+          const pos = new THREE.Vector3();
+          const quat = new THREE.Quaternion();
+          const scale = new THREE.Vector3();
+          refMatrix.decompose(pos, quat, scale);
+
+          const transform = new XRT(
+            { x: pos.x, y: pos.y, z: pos.z, w: 1 },
+            { x: quat.x, y: quat.y, z: quat.z, w: quat.w }
+          );
+          const offsetSpace = baseRefSpaceRef.current.getOffsetReferenceSpace(transform);
+          gl.xr.setReferenceSpace(offsetSpace);
+        }
+      } catch (e) {
+        console.warn('XR locomotion reference space update failed:', e);
+      }
+    }
   });
 
   return null;
@@ -829,37 +913,45 @@ export default function ExhibitionCanvas({
         camera={{ position: [0, 8, 16], fov: 50 }}
         className="w-full h-full"
       >
-        <color attach="background" args={['#0e1012']} />
-        
-        {/* Realistic subtle ambient exposure */}
-        <ambientLight intensity={0.45} />
-        
-        {/* Soft simulated Hemisphere sky glow */}
-        <hemisphereLight 
-          color="#ffffff" 
-          groundColor="#111111" 
-          intensity={0.6} 
-        />
+        <color attach="background" args={['#12151a']} />
 
-        {/* Dynamic primary spotlight to generate realistic structural shadows */}
+        {/* Bright professional exhibition ambient — fills shadows */}
+        <ambientLight intensity={2.2} color="#f8f4ee" />
+
+        {/* Sky hemisphere — warm ceiling / cool floor bounce */}
+        <hemisphereLight color="#fff8f0" groundColor="#d0ccc4" intensity={1.8} />
+
+        {/* Primary overhead directional (hall-wide fill) */}
         <directionalLight
           castShadow
-          position={[0, 16, 8]}
-          intensity={1.1}
-          shadow-mapSize-width={1024}
-          shadow-mapSize-height={1024}
-          shadow-camera-far={40}
-          shadow-camera-left={-20}
-          shadow-camera-right={20}
-          shadow-camera-top={20}
-          shadow-camera-bottom={-20}
+          position={[0, 18, 6]}
+          intensity={3.5}
+          color="#ffffff"
+          shadow-mapSize-width={2048}
+          shadow-mapSize-height={2048}
+          shadow-camera-far={50}
+          shadow-camera-left={-25}
+          shadow-camera-right={25}
+          shadow-camera-top={25}
+          shadow-camera-bottom={-25}
         />
 
-        {/* Ceiling spotlights structure */}
-        <pointLight position={[-10, 8, -6]} intensity={0.8} distance={15} color="#38bdf8" />
-        <pointLight position={[10, 8, -6]} intensity={0.8} distance={15} color="#38bdf8" />
-        <pointLight position={[-10, 8, 6]} intensity={0.8} distance={15} color="#38bdf8" />
-        <pointLight position={[10, 8, 6]} intensity={0.8} distance={15} color="#38bdf8" />
+        {/* Front-fill directional to eliminate harsh back-shadows on booth faces */}
+        <directionalLight position={[0, 8, 14]} intensity={2.0} color="#fff8f0" />
+
+        {/* Professional exhibition overhead spotlights — warm white halogen */}
+        <pointLight position={[-8, 9, -8]}  intensity={4.0} distance={18} color="#fff6e8" />
+        <pointLight position={[8,  9, -8]}  intensity={4.0} distance={18} color="#fff6e8" />
+        <pointLight position={[-8, 9,  0]}  intensity={4.0} distance={18} color="#fff6e8" />
+        <pointLight position={[8,  9,  0]}  intensity={4.0} distance={18} color="#fff6e8" />
+        <pointLight position={[-8, 9,  8]}  intensity={4.0} distance={18} color="#fff6e8" />
+        <pointLight position={[8,  9,  8]}  intensity={4.0} distance={18} color="#fff6e8" />
+        <pointLight position={[0,  9, -8]}  intensity={3.5} distance={18} color="#fff6e8" />
+        <pointLight position={[0,  9,  8]}  intensity={3.5} distance={18} color="#fff6e8" />
+
+        {/* Centre aisle accent lights — blue-white display lighting */}
+        <pointLight position={[0, 6, -4]} intensity={2.5} distance={10} color="#e8f4ff" />
+        <pointLight position={[0, 6,  4]} intensity={2.5} distance={10} color="#e8f4ff" />
 
         {/* 3D Exhibition Structure Geometries */}
         <Suspense fallback={null}>
@@ -902,11 +994,13 @@ export default function ExhibitionCanvas({
           setXrActive={setXrActive}
         />
 
-        {/* Quest 3 thumbstick locomotion — active only during an XR session */}
+        {/* Quest 3 thumbstick locomotion + snap turn + trigger selection */}
         {xrActive && (
           <XRLocomotionController
             hall={hall}
+            booths={booths}
             setVisitorPos={setVisitorPos}
+            onSelectBooth={onSelectBooth}
           />
         )}
 
