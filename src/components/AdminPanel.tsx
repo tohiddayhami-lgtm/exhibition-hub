@@ -226,11 +226,12 @@ export default function AdminPanel({
       productImageUrl: bProductImg,
       websiteUrl:      bWebsite.trim()  || '',
       whatsapp:        bWhatsapp.trim() || '',
-      videoUrl:        bVideo.trim()    || '',   // ← exact value, no default override
-      catalogUrl:      bCatalog.trim()  || undefined,
+      videoUrl:        bVideo.trim()    || '',
       stylePreset: bPreset,
-      modelUrl:    customModelUrl || undefined,
       modelScale:  1.0,
+      // Optional fields: omit entirely when empty — Firestore rejects `undefined`
+      ...(bCatalog.trim()  ? { catalogUrl: bCatalog.trim() }    : {}),
+      ...(customModelUrl   ? { modelUrl:   customModelUrl }     : {}),
       createdAt:   new Date().toISOString(),
       updatedAt:   new Date().toISOString(),
     };
