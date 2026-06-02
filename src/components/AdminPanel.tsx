@@ -26,6 +26,8 @@ export default function AdminPanel({
   const [activeTab, setActiveTab] = useState<'hall' | 'booth-list' | 'booth-form'>('booth-list');
   const [selectedBoothId, setSelectedBoothId] = useState<string | null>(null);
   const [showWizard, setShowWizard] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   // Hall Form State
   const [hallName, setHallName] = useState(hall.name);
@@ -193,62 +195,74 @@ export default function AdminPanel({
 
   // Save/Publish Booth configurations
   const handleSaveBooth = async () => {
+    setSaveError(null);
+
     if (!bCompany.trim()) {
-      alert('Please provide a valid company name!');
+      setSaveError('نام شرکت را وارد کنید.');
       return;
     }
-    
-    // Safety boundaries check
-    const maxX = hall.width / 2;
-    const maxZ = hall.depth / 2;
-    if (Math.abs(bPosX) > maxX || Math.abs(bPosZ) > maxZ) {
-      alert(`Safety alert: Your booth coordinates place it outside the exhibition walls. Max values are X: ±${maxX.toFixed(1)}m, Z: ±${maxZ.toFixed(1)}m. Correcting positions...`);
-      return;
-    }
+
+    // Auto-clamp coordinates — never block save because of position
+    const maxX = hall.width  / 2 - 0.5;
+    const maxZ = hall.depth  / 2 - 0.5;
+    const safePosX = Math.max(-maxX, Math.min(maxX, Number(bPosX)));
+    const safePosZ = Math.max(-maxZ, Math.min(maxZ, Number(bPosZ)));
 
     const savedBooth: Booth = {
       id: bId,
       hallId: hall.id,
-      boothNumber: bNumber,
-      companyName: bCompany,
-      category: bCategory,
+      boothNumber: bNumber || `B${booths.length + 1}`,
+      companyName: bCompany.trim(),
+      category: bCategory || 'General',
       description: bDesc,
-      width: Number(bWidth),
-      depth: Number(bDepth),
-      height: Number(bHeight),
-      posX: Number(bPosX),
-      posZ: Number(bPosZ),
-      themeColor: bColor,
-      logoUrl: bLogo,
-      bannerUrl: bBanner,
+      width:  Number(bWidth)  || 4,
+      depth:  Number(bDepth)  || 3,
+      height: Number(bHeight) || 3,
+      posX: safePosX,
+      posZ: safePosZ,
+      themeColor:      bColor || '#38bdf8',
+      logoUrl:         bLogo,
+      bannerUrl:       bBanner,
       productImageUrl: bProductImg,
-      websiteUrl: bWebsite || 'https://google.com',
-      whatsapp: bWhatsapp || '+15550192837',
-      videoUrl: bVideo || 'https://www.w3schools.com/html/mov_bbb.mp4',
-      catalogUrl: bCatalog || undefined,
+      websiteUrl:      bWebsite.trim()  || '',
+      whatsapp:        bWhatsapp.trim() || '',
+      videoUrl:        bVideo.trim()    || '',   // ← exact value, no default override
+      catalogUrl:      bCatalog.trim()  || undefined,
       stylePreset: bPreset,
-      modelUrl: customModelUrl,
-      modelScale: 1.0,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      modelUrl:    customModelUrl || undefined,
+      modelScale:  1.0,
+      createdAt:   new Date().toISOString(),
+      updatedAt:   new Date().toISOString(),
     };
 
-    const docPath = `halls/${hall.id}/booths/${savedBooth.id}`;
+    setIsSaving(true);
     try {
       await setDoc(doc(db, 'halls', hall.id, 'booths', savedBooth.id), savedBooth);
-      
-      let updatedBooths: Booth[];
-      if (selectedBoothId) {
-        updatedBooths = booths.map((b) => (b.id === savedBooth.id ? savedBooth : b));
-      } else {
-        updatedBooths = [...booths, savedBooth];
-      }
-      
-      onUpdateBooths(updatedBooths);
+
+      onUpdateBooths(
+        selectedBoothId
+          ? booths.map(b => b.id === savedBooth.id ? savedBooth : b)
+          : [...booths, savedBooth]
+      );
       setActiveTab('booth-list');
-      alert(`Booth ${bNumber} published inside Firestore database successfully!`);
-    } catch (e) {
-      handleFirestoreError(e, OperationType.WRITE, docPath);
+
+    } catch (e: unknown) {
+      const code = (e as { code?: string }).code ?? '';
+      const msg  = (e as { message?: string }).message ?? String(e);
+
+      let friendly = `خطا در ذخیره: ${msg}`;
+      if (code === 'permission-denied') {
+        friendly = 'دسترسی رد شد (permission-denied).\n\nدر Firebase Console → Firestore → Rules این قانون را اضافه کنید:\n\nallow write: if request.auth != null;';
+      } else if (code === 'unauthenticated') {
+        friendly = 'لطفاً ابتدا از Builder Login وارد شوید.';
+      } else if (code === 'unavailable' || msg.includes('offline')) {
+        friendly = 'اتصال به Firebase برقرار نیست. اینترنت را بررسی کنید.';
+      }
+
+      console.error('[AdminPanel] booth save failed —', code, msg, e);
+      setSaveError(friendly);
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -752,15 +766,30 @@ export default function AdminPanel({
               </div>
             </div>
 
-            {/* Save Action Banner */}
+            {/* Error message */}
+            {saveError && (
+              <div className="p-3.5 bg-red-50 border border-red-200 rounded-lg">
+                <p className="text-xs font-bold text-red-600 mb-1 flex items-center gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0" /> خطا در ذخیره
+                </p>
+                <p className="text-[11px] text-red-500 whitespace-pre-line leading-relaxed">
+                  {saveError}
+                </p>
+              </div>
+            )}
+
+            {/* Save Action */}
             <div className="pt-2">
               <button
                 id="publish-booth-btn"
                 onClick={handleSaveBooth}
-                className="w-full bg-[#1A1D21] hover:bg-[#2C3036] text-white font-bold text-sm py-3.5 px-4 rounded-md flex items-center justify-center gap-2 cursor-pointer shadow-sm transition-all"
+                disabled={isSaving}
+                className="w-full bg-[#1A1D21] hover:bg-[#2C3036] disabled:opacity-60 disabled:cursor-not-allowed text-white font-bold text-sm py-3.5 px-4 rounded-md flex items-center justify-center gap-2 cursor-pointer shadow-sm transition-all"
               >
-                <Save className="w-4 h-4" />
-                <span>Publish Stand to Live Expo</span>
+                {isSaving
+                  ? <><Eye className="w-4 h-4 animate-pulse" /><span>در حال ذخیره...</span></>
+                  : <><Save className="w-4 h-4" /><span>Publish Stand to Live Expo</span></>
+                }
               </button>
             </div>
           </div>
