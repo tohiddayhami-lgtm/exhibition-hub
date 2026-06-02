@@ -415,7 +415,7 @@ function SceneCameraController({ visitorPos, teleportTarget, setTeleportTarget, 
   setTeleportTarget: (pos: [number, number, number] | null) => void;
   povEnabled: boolean;
 }) {
-  const { camera } = useThree();
+  const { camera, gl } = useThree();
 
   useEffect(() => {
     if (!povEnabled) return;
@@ -425,6 +425,9 @@ function SceneCameraController({ visitorPos, teleportTarget, setTeleportTarget, 
   }, [camera, povEnabled]);
 
   useFrame(() => {
+    // When XR headset is active, the XR system controls camera pose — don't override it
+    if (gl.xr.isPresenting) return;
+
     if (povEnabled) {
       camera.position.set(visitorPos[0], HUMAN_EYE_HEIGHT, visitorPos[2]);
       if (teleportTarget) setTeleportTarget(null);
@@ -447,6 +450,89 @@ function SceneCameraController({ visitorPos, teleportTarget, setTeleportTarget, 
         setTeleportTarget(null);
       }
     }
+  });
+
+  return null;
+}
+
+// Quest 3 / WebXR controller thumbstick locomotion
+function XRLocomotionController({ hall, setVisitorPos }: {
+  hall: Hall;
+  setVisitorPos: (pos: [number, number, number]) => void;
+}) {
+  const { gl, camera } = useThree();
+  const baseRefSpaceRef = useRef<XRReferenceSpace | null>(null);
+  const playerX = useRef(0);
+  const playerZ = useRef(0);
+
+  useFrame((_, delta) => {
+    if (!gl.xr.isPresenting) {
+      // Reset accumulated position when VR session ends
+      if (baseRefSpaceRef.current) {
+        baseRefSpaceRef.current = null;
+        playerX.current = 0;
+        playerZ.current = 0;
+      }
+      return;
+    }
+
+    // Capture the base reference space once per session (before any locomotion offsets)
+    if (!baseRefSpaceRef.current) {
+      const refSpace = gl.xr.getReferenceSpace();
+      if (!refSpace) return;
+      baseRefSpaceRef.current = refSpace as XRReferenceSpace;
+    }
+
+    const session = gl.xr.getSession();
+    if (!session) return;
+
+    let dx = 0;
+    let dz = 0;
+    const speed = 3.0 * Math.min(delta, 0.05);
+
+    // Read left thumbstick from Quest controllers for smooth locomotion
+    for (const source of session.inputSources) {
+      if (!source.gamepad || source.handedness !== 'left') continue;
+      const axes = source.gamepad.axes;
+      // Quest controllers: axes[2] = thumbstick X, axes[3] = thumbstick Y
+      const thumbX = axes.length >= 4 ? axes[2] : 0;
+      const thumbY = axes.length >= 4 ? axes[3] : 0;
+
+      if (Math.abs(thumbX) > 0.15 || Math.abs(thumbY) > 0.15) {
+        const forward = new THREE.Vector3();
+        camera.getWorldDirection(forward);
+        forward.y = 0;
+        if (forward.lengthSq() < 0.001) forward.set(0, 0, -1);
+        forward.normalize();
+        const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+
+        // thumbY is negative when pushed forward → negate to walk forward
+        dx += (forward.x * -thumbY + right.x * thumbX) * speed;
+        dz += (forward.z * -thumbY + right.z * thumbX) * speed;
+      }
+    }
+
+    if (dx === 0 && dz === 0) return;
+
+    const halfW = hall.width / 2 - 2;
+    const halfD = hall.depth / 2 - 2;
+    playerX.current = Math.max(-halfW, Math.min(halfW, playerX.current + dx));
+    playerZ.current = Math.max(-halfD, Math.min(halfD, playerZ.current + dz));
+
+    // Move the XR reference space so the virtual world shifts under the player
+    // We always offset from the captured base space to avoid compounding transforms
+    try {
+      const XRT = (window as unknown as { XRRigidTransform?: typeof XRRigidTransform }).XRRigidTransform;
+      if (XRT && baseRefSpaceRef.current) {
+        const transform = new XRT({ x: -playerX.current, y: 0, z: -playerZ.current, w: 1 });
+        const offsetSpace = baseRefSpaceRef.current.getOffsetReferenceSpace(transform);
+        gl.xr.setReferenceSpace(offsetSpace);
+      }
+    } catch (e) {
+      console.warn('XR locomotion reference space update failed:', e);
+    }
+
+    setVisitorPos([playerX.current, VISITOR_BODY_HEIGHT, playerZ.current]);
   });
 
   return null;
@@ -566,16 +652,19 @@ function HumanPOVXRButton({
   visitorPos,
   povEnabled,
   setPovEnabled,
-  setTeleportTarget
+  setTeleportTarget,
+  xrActive,
+  setXrActive,
 }: {
   visitorPos: [number, number, number];
   povEnabled: boolean;
   setPovEnabled: (enabled: boolean) => void;
   setTeleportTarget: (pos: [number, number, number] | null) => void;
+  xrActive: boolean;
+  setXrActive: (active: boolean) => void;
 }) {
   const { gl, camera } = useThree();
   const [xrSupported, setXrSupported] = useState(false);
-  const [xrActive, setXrActive] = useState(false);
   const [statusMessage, setStatusMessage] = useState('Desktop human POV');
 
   useEffect(() => {
@@ -694,16 +783,17 @@ function HumanPOVXRButton({
   );
 }
 
-export default function ExhibitionCanvas({ 
-  hall, 
-  booths, 
-  activeBoothId, 
+export default function ExhibitionCanvas({
+  hall,
+  booths,
+  activeBoothId,
   onSelectBooth,
   visitorPos,
   setVisitorPos
 }: ExhibitionCanvasProps) {
   const [teleportTarget, setTeleportTarget] = useState<[number, number, number] | null>(null);
   const [povEnabled, setPovEnabled] = useState(false);
+  const [xrActive, setXrActive] = useState(false);
 
   // Walk on floor click trigger
   const handleFloorClick = (point: THREE.Vector3) => {
@@ -808,34 +898,61 @@ export default function ExhibitionCanvas({
           povEnabled={povEnabled}
           setPovEnabled={setPovEnabled}
           setTeleportTarget={setTeleportTarget}
+          xrActive={xrActive}
+          setXrActive={setXrActive}
         />
 
-        {/* Easy Orbit camera controls allowing looking around */}
-        {povEnabled ? (
-          <PointerLockControls />
-        ) : (
-          <OrbitControls 
-            enableDamping
-            dampingFactor={0.08}
-            minDistance={3}
-            maxDistance={28}
-            maxPolarAngle={Math.PI / 2.1} // Prevent looking through floor
-            target={[visitorPos[0], 1.2, visitorPos[2]]}
+        {/* Quest 3 thumbstick locomotion — active only during an XR session */}
+        {xrActive && (
+          <XRLocomotionController
+            hall={hall}
+            setVisitorPos={setVisitorPos}
           />
+        )}
+
+        {/* Desktop camera controls — disabled while XR headset is presenting */}
+        {!xrActive && (
+          povEnabled ? (
+            <PointerLockControls />
+          ) : (
+            <OrbitControls
+              enableDamping
+              dampingFactor={0.08}
+              minDistance={3}
+              maxDistance={28}
+              maxPolarAngle={Math.PI / 2.1}
+              target={[visitorPos[0], 1.2, visitorPos[2]]}
+            />
+          )
         )}
       </Canvas>
 
-      {/* Floating HUD keyboard navigation assistance */}
+      {/* Floating HUD — shows Quest controls in XR, keyboard guide on desktop */}
       <div className="absolute bottom-4 left-4 bg-neutral-950/90 text-neutral-300 border border-neutral-800/80 p-3 rounded-lg text-[10px] space-y-1.5 font-mono z-10 shadow-lg hidden md:block">
-        <p className="font-bold text-white tracking-wider uppercase flex items-center gap-1.5">
-          <span className="w-1.5 h-1.5 rounded-full bg-cyan-500 animate-pulse" />
-          Virtual Controls GUIDE
-        </p>
-        <p className="opacity-80">🖱️ Left Click + Drag : Rotate Camera View</p>
-        <p className="opacity-80">🖱️ Right Click + Drag : Pan Camera</p>
-        <p className="opacity-80">📍 Click on Floor : Smooth Teleport walk</p>
-        <p className="opacity-80">🎹 Keyboard WASD / Arrows : Slide position</p>
-        <p className="opacity-80">👓 Human POV / VR : Eye-height headset view</p>
+        {xrActive ? (
+          <>
+            <p className="font-bold text-cyan-400 tracking-wider uppercase flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
+              Quest 3 Controls
+            </p>
+            <p className="opacity-80">🕹️ Left Thumbstick : Walk / Strafe</p>
+            <p className="opacity-80">🕹️ Right Thumbstick : Snap Turn</p>
+            <p className="opacity-80">👆 Right Trigger : Select Booth</p>
+            <p className="opacity-80">🔲 B / Y Button : Exit VR</p>
+          </>
+        ) : (
+          <>
+            <p className="font-bold text-white tracking-wider uppercase flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-cyan-500 animate-pulse" />
+              Virtual Controls GUIDE
+            </p>
+            <p className="opacity-80">🖱️ Left Click + Drag : Rotate Camera View</p>
+            <p className="opacity-80">🖱️ Right Click + Drag : Pan Camera</p>
+            <p className="opacity-80">📍 Click on Floor : Smooth Teleport walk</p>
+            <p className="opacity-80">🎹 Keyboard WASD / Arrows : Slide position</p>
+            <p className="opacity-80">👓 Human POV / VR : Eye-height headset view</p>
+          </>
+        )}
       </div>
     </div>
   );
