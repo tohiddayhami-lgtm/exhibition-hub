@@ -1,9 +1,31 @@
 import React, { useRef, useEffect, useState, Suspense } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { OrbitControls, Html, useGLTF, Helper } from '@react-three/drei';
+import { OrbitControls, Html, useGLTF, PointerLockControls } from '@react-three/drei';
 import * as THREE from 'three';
 import { Hall, Booth } from '../types';
-import { Award, Eye, UserCheck, Star, HelpCircle } from 'lucide-react';
+import { Eye, Glasses } from 'lucide-react';
+
+const HUMAN_EYE_HEIGHT = 1.65;
+const VISITOR_BODY_HEIGHT = 0.8;
+const VR_SESSION_MODE = 'immersive-vr';
+
+type XRSessionLike = {
+  end: () => Promise<void>;
+  addEventListener: (type: 'end', listener: () => void) => void;
+  removeEventListener: (type: 'end', listener: () => void) => void;
+};
+
+type XRSystemLike = {
+  isSessionSupported: (mode: typeof VR_SESSION_MODE) => Promise<boolean>;
+  requestSession: (
+    mode: typeof VR_SESSION_MODE,
+    options?: { optionalFeatures?: string[] }
+  ) => Promise<XRSessionLike>;
+};
+
+function getNavigatorXR() {
+  return (navigator as Navigator & { xr?: XRSystemLike }).xr;
+}
 
 interface ExhibitionCanvasProps {
   hall: Hall;
@@ -387,14 +409,28 @@ function BoothStructure({
 }
 
 // Frame core to handle smoothly interpolating camera and controls states
-function SceneCameraController({ visitorPos, teleportTarget, setTeleportTarget }: {
+function SceneCameraController({ visitorPos, teleportTarget, setTeleportTarget, povEnabled }: {
   visitorPos: [number, number, number];
   teleportTarget: [number, number, number] | null;
   setTeleportTarget: (pos: [number, number, number] | null) => void;
+  povEnabled: boolean;
 }) {
   const { camera } = useThree();
 
+  useEffect(() => {
+    if (!povEnabled) return;
+
+    camera.position.set(visitorPos[0], HUMAN_EYE_HEIGHT, visitorPos[2]);
+    camera.lookAt(visitorPos[0], HUMAN_EYE_HEIGHT, visitorPos[2] - 1);
+  }, [camera, povEnabled]);
+
   useFrame(() => {
+    if (povEnabled) {
+      camera.position.set(visitorPos[0], HUMAN_EYE_HEIGHT, visitorPos[2]);
+      if (teleportTarget) setTeleportTarget(null);
+      return;
+    }
+
     // Smooth camera teleporting slide
     if (teleportTarget) {
       const dx = teleportTarget[0] - camera.position.x;
@@ -416,6 +452,248 @@ function SceneCameraController({ visitorPos, teleportTarget, setTeleportTarget }
   return null;
 }
 
+function KeyboardMovementController({
+  hall,
+  visitorPos,
+  setVisitorPos,
+  setTeleportTarget,
+  povEnabled
+}: {
+  hall: Hall;
+  visitorPos: [number, number, number];
+  setVisitorPos: (pos: [number, number, number]) => void;
+  setTeleportTarget: (pos: [number, number, number] | null) => void;
+  povEnabled: boolean;
+}) {
+  const { camera } = useThree();
+  const keysPressed = useRef<Set<string>>(new Set());
+  const latestVisitorPos = useRef(visitorPos);
+
+  useEffect(() => {
+    latestVisitorPos.current = visitorPos;
+  }, [visitorPos]);
+
+  useEffect(() => {
+    const isTypingTarget = (target: EventTarget | null) => {
+      const element = target as HTMLElement | null;
+      if (!element) return false;
+      return ['INPUT', 'TEXTAREA', 'SELECT'].includes(element.tagName) || element.isContentEditable;
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (isTypingTarget(e.target)) return;
+      const key = e.key.toLowerCase();
+      if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) {
+        keysPressed.current.add(key);
+        e.preventDefault();
+      }
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      keysPressed.current.delete(e.key.toLowerCase());
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
+  }, []);
+
+  useFrame((_, delta) => {
+    if (keysPressed.current.size === 0) return;
+
+    const step = (povEnabled ? 3.2 : 4.5) * Math.min(delta, 0.05);
+    let dx = 0;
+    let dz = 0;
+
+    if (povEnabled) {
+      const forward = new THREE.Vector3();
+      camera.getWorldDirection(forward);
+      forward.y = 0;
+      if (forward.lengthSq() === 0) {
+        forward.set(0, 0, -1);
+      } else {
+        forward.normalize();
+      }
+
+      const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+
+      if (keysPressed.current.has('w') || keysPressed.current.has('arrowup')) {
+        dx += forward.x * step;
+        dz += forward.z * step;
+      }
+      if (keysPressed.current.has('s') || keysPressed.current.has('arrowdown')) {
+        dx -= forward.x * step;
+        dz -= forward.z * step;
+      }
+      if (keysPressed.current.has('d') || keysPressed.current.has('arrowright')) {
+        dx += right.x * step;
+        dz += right.z * step;
+      }
+      if (keysPressed.current.has('a') || keysPressed.current.has('arrowleft')) {
+        dx -= right.x * step;
+        dz -= right.z * step;
+      }
+    } else {
+      if (keysPressed.current.has('w') || keysPressed.current.has('arrowup')) dz -= step;
+      if (keysPressed.current.has('s') || keysPressed.current.has('arrowdown')) dz += step;
+      if (keysPressed.current.has('a') || keysPressed.current.has('arrowleft')) dx -= step;
+      if (keysPressed.current.has('d') || keysPressed.current.has('arrowright')) dx += step;
+    }
+
+    if (dx === 0 && dz === 0) return;
+
+    const [x, , z] = latestVisitorPos.current;
+    const nextX = Math.max(-hall.width / 2 + 2, Math.min(hall.width / 2 - 2, x + dx));
+    const nextZ = Math.max(-hall.depth / 2 + 2, Math.min(hall.depth / 2 - 2, z + dz));
+    const nextPos: [number, number, number] = [nextX, VISITOR_BODY_HEIGHT, nextZ];
+
+    latestVisitorPos.current = nextPos;
+    setVisitorPos(nextPos);
+
+    if (!povEnabled) {
+      setTeleportTarget([nextX, 0, nextZ]);
+    }
+  });
+
+  return null;
+}
+
+function HumanPOVXRButton({
+  visitorPos,
+  povEnabled,
+  setPovEnabled,
+  setTeleportTarget
+}: {
+  visitorPos: [number, number, number];
+  povEnabled: boolean;
+  setPovEnabled: (enabled: boolean) => void;
+  setTeleportTarget: (pos: [number, number, number] | null) => void;
+}) {
+  const { gl, camera } = useThree();
+  const [xrSupported, setXrSupported] = useState(false);
+  const [xrActive, setXrActive] = useState(false);
+  const [statusMessage, setStatusMessage] = useState('Desktop human POV');
+
+  useEffect(() => {
+    let cancelled = false;
+    const xr = getNavigatorXR();
+
+    if (!xr) {
+      setStatusMessage('Desktop human POV');
+      return;
+    }
+
+    xr.isSessionSupported(VR_SESSION_MODE)
+      .then((supported) => {
+        if (cancelled) return;
+        setXrSupported(supported);
+        setStatusMessage(supported ? 'Meta Quest / VR ready' : 'Desktop human POV');
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setStatusMessage('Desktop human POV');
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleTogglePOV = async (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+
+    const currentSession = gl.xr.getSession();
+    if (currentSession || xrActive) {
+      await currentSession?.end();
+      setXrActive(false);
+      setPovEnabled(false);
+      setStatusMessage(xrSupported ? 'Meta Quest / VR ready' : 'Desktop human POV');
+      return;
+    }
+
+    if (povEnabled) {
+      if (document.pointerLockElement) {
+        document.exitPointerLock();
+      }
+      setPovEnabled(false);
+      setStatusMessage(xrSupported ? 'Meta Quest / VR ready' : 'Desktop human POV');
+      return;
+    }
+
+    setPovEnabled(true);
+    setTeleportTarget(null);
+    camera.position.set(visitorPos[0], HUMAN_EYE_HEIGHT, visitorPos[2]);
+    camera.lookAt(visitorPos[0], HUMAN_EYE_HEIGHT, visitorPos[2] - 1);
+
+    const xr = getNavigatorXR();
+    let canStartXR = xrSupported;
+    if (xr && !canStartXR) {
+      try {
+        canStartXR = await xr.isSessionSupported(VR_SESSION_MODE);
+        setXrSupported(canStartXR);
+      } catch {
+        canStartXR = false;
+      }
+    }
+
+    if (!xr || !canStartXR) {
+      setStatusMessage('Click the hall to look around');
+      return;
+    }
+
+    try {
+      gl.xr.enabled = true;
+      gl.xr.setReferenceSpaceType('local-floor');
+
+      const session = await xr.requestSession(VR_SESSION_MODE, {
+        optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking']
+      });
+
+      const handleSessionEnd = () => {
+        session.removeEventListener('end', handleSessionEnd);
+        setXrActive(false);
+        setPovEnabled(false);
+        setStatusMessage('Meta Quest / VR ready');
+      };
+
+      session.addEventListener('end', handleSessionEnd);
+      await gl.xr.setSession(session as never);
+      setXrActive(true);
+      setStatusMessage('Rendering from headset');
+    } catch (error) {
+      console.warn('Could not start immersive VR session:', error);
+      setStatusMessage('VR blocked, using desktop POV');
+    }
+  };
+
+  return (
+    <Html fullscreen>
+      <div className="absolute top-4 right-4 z-20 flex flex-col items-end gap-2 pointer-events-none select-none">
+        <button
+          id="human-pov-vr-toggle"
+          type="button"
+          onClick={handleTogglePOV}
+          className={`pointer-events-auto flex items-center gap-2 px-4 py-2.5 rounded-md border text-xs font-mono font-black uppercase tracking-wider shadow-lg backdrop-blur-md transition-all cursor-pointer ${
+            povEnabled || xrActive
+              ? 'bg-cyan-400 text-neutral-950 border-cyan-200'
+              : 'bg-neutral-950/90 text-white border-neutral-700 hover:bg-neutral-900'
+          }`}
+        >
+          {xrSupported ? <Glasses className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+          <span>{xrActive ? 'Exit VR' : povEnabled ? 'Exit Human POV' : 'Human POV / VR'}</span>
+        </button>
+        <div className="pointer-events-none bg-neutral-950/80 text-neutral-300 border border-neutral-800 px-3 py-1.5 rounded-md text-[10px] font-mono shadow-lg">
+          {statusMessage}
+        </div>
+      </div>
+    </Html>
+  );
+}
+
 export default function ExhibitionCanvas({ 
   hall, 
   booths, 
@@ -425,6 +703,7 @@ export default function ExhibitionCanvas({
   setVisitorPos
 }: ExhibitionCanvasProps) {
   const [teleportTarget, setTeleportTarget] = useState<[number, number, number] | null>(null);
+  const [povEnabled, setPovEnabled] = useState(false);
 
   // Walk on floor click trigger
   const handleFloorClick = (point: THREE.Vector3) => {
@@ -433,58 +712,25 @@ export default function ExhibitionCanvas({
     const targetX = Math.max(-hall.width / 2 + margin, Math.min(hall.width / 2 - margin, point.x));
     const targetZ = Math.max(-hall.depth / 2 + margin, Math.min(hall.depth / 2 - margin, point.z));
     
-    setTeleportTarget([targetX, 0, targetZ]);
-    setVisitorPos([targetX, 0.8, targetZ]);
+    if (povEnabled) {
+      setTeleportTarget(null);
+    } else {
+      setTeleportTarget([targetX, 0, targetZ]);
+    }
+    setVisitorPos([targetX, VISITOR_BODY_HEIGHT, targetZ]);
   };
-
-  // Keyboard controls WASD slider
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      let dx = 0;
-      let dz = 0;
-      const speed = 0.5;
-
-      switch(e.key.toLowerCase()) {
-        case 'w':
-        case 'arrowup':
-          dz = -speed;
-          break;
-        case 's':
-        case 'arrowdown':
-          dz = speed;
-          break;
-        case 'a':
-        case 'arrowleft':
-          dx = -speed;
-          break;
-        case 'd':
-        case 'arrowright':
-          dx = speed;
-          break;
-      }
-
-      if (dx !== 0 || dz !== 0) {
-        setVisitorPos([
-          Math.max(-hall.width/2 + 2, Math.min(hall.width/2 - 2, visitorPos[0] + dx)),
-          visitorPos[1],
-          Math.max(-hall.depth/2 + 2, Math.min(hall.depth/2 - 2, visitorPos[2] + dz))
-        ]);
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [visitorPos, hall]);
 
   // Synchronize when a custom booth model selection is clicked outside or requested
   useEffect(() => {
     if (activeBoothId) {
       const activeBooth = booths.find(b => b.id === activeBoothId);
       if (activeBooth) {
-        setTeleportTarget([activeBooth.posX, 0, activeBooth.posZ + 3.4]);
+        const target: [number, number, number] = [activeBooth.posX, 0, activeBooth.posZ + 3.4];
+        setVisitorPos([target[0], VISITOR_BODY_HEIGHT, target[2]]);
+        setTeleportTarget(povEnabled ? null : target);
       }
     }
-  }, [activeBoothId, booths]);
+  }, [activeBoothId, booths, povEnabled, setVisitorPos]);
 
   return (
     <div id="exhibition-render-container" className="w-full h-full relative bg-neutral-950">
@@ -546,17 +792,37 @@ export default function ExhibitionCanvas({
           visitorPos={visitorPos} 
           teleportTarget={teleportTarget} 
           setTeleportTarget={setTeleportTarget} 
+          povEnabled={povEnabled}
+        />
+
+        <KeyboardMovementController
+          hall={hall}
+          visitorPos={visitorPos}
+          setVisitorPos={setVisitorPos}
+          setTeleportTarget={setTeleportTarget}
+          povEnabled={povEnabled}
+        />
+
+        <HumanPOVXRButton
+          visitorPos={visitorPos}
+          povEnabled={povEnabled}
+          setPovEnabled={setPovEnabled}
+          setTeleportTarget={setTeleportTarget}
         />
 
         {/* Easy Orbit camera controls allowing looking around */}
-        <OrbitControls 
-          enableDamping
-          dampingFactor={0.08}
-          minDistance={3}
-          maxDistance={28}
-          maxPolarAngle={Math.PI / 2.1} // Prevent looking through floor
-          target={[visitorPos[0], 1.2, visitorPos[2]]}
-        />
+        {povEnabled ? (
+          <PointerLockControls />
+        ) : (
+          <OrbitControls 
+            enableDamping
+            dampingFactor={0.08}
+            minDistance={3}
+            maxDistance={28}
+            maxPolarAngle={Math.PI / 2.1} // Prevent looking through floor
+            target={[visitorPos[0], 1.2, visitorPos[2]]}
+          />
+        )}
       </Canvas>
 
       {/* Floating HUD keyboard navigation assistance */}
@@ -569,6 +835,7 @@ export default function ExhibitionCanvas({
         <p className="opacity-80">🖱️ Right Click + Drag : Pan Camera</p>
         <p className="opacity-80">📍 Click on Floor : Smooth Teleport walk</p>
         <p className="opacity-80">🎹 Keyboard WASD / Arrows : Slide position</p>
+        <p className="opacity-80">👓 Human POV / VR : Eye-height headset view</p>
       </div>
     </div>
   );
