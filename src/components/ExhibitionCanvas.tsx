@@ -201,8 +201,30 @@ function getYouTubeId(url: string): string | null {
   const m = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/);
   return m ? m[1] : null;
 }
+
+function normalizeExternalUrl(url: string) {
+  const trimmed = url.trim();
+  if (!trimmed) return '';
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+}
+
+function openExternalLink(url: string, sameTab = false) {
+  const normalizedUrl = normalizeExternalUrl(url);
+  if (!normalizedUrl) return;
+
+  if (sameTab) {
+    window.location.assign(normalizedUrl);
+    return;
+  }
+
+  const popup = window.open(normalizedUrl, '_blank', 'noopener,noreferrer');
+  if (!popup) {
+    window.location.assign(normalizedUrl);
+  }
+}
+
 function toYouTubeEmbed(id: string) {
-  return `https://www.youtube.com/embed/${id}?autoplay=1&mute=1&playsinline=1&rel=0&modestbranding=1`;
+  return `https://www.youtube.com/embed/${id}?autoplay=1&playsinline=1&rel=0&modestbranding=1`;
 }
 
 // ── Control button helper (3D clickable button, works in VR) ─────────────────
@@ -513,14 +535,12 @@ function BoothStructure({
   booth,
   active,
   onSelect,
-  onOpenLink,
   isYoutubePlaying,
   onToggleYoutubeVideo,
 }: {
   booth: Booth;
   active: boolean;
   onSelect: () => void;
-  onOpenLink: (url: string, title: string) => void;
   isYoutubePlaying: boolean;
   onToggleYoutubeVideo: (booth: Booth) => void;
 }) {
@@ -662,7 +682,7 @@ function BoothStructure({
           onClick={(e) => {
             e.stopPropagation();
             if (booth.websiteUrl) {
-              onOpenLink(booth.websiteUrl, booth.companyName);
+              openExternalLink(booth.websiteUrl);
             }
           }}
           onPointerOver={(e) => {
@@ -981,8 +1001,8 @@ function XRInteractionSystem({
           booth,
           kind: 'info',
           box: new THREE.Box3(
-            new THREE.Vector3(infoCenter.x - 0.35, infoCenter.y - 0.2, infoCenter.z - 0.12),
-            new THREE.Vector3(infoCenter.x + 0.35, infoCenter.y + 0.2, infoCenter.z + 0.12)
+            new THREE.Vector3(infoCenter.x - 0.7, infoCenter.y - 0.45, infoCenter.z - 0.35),
+            new THREE.Vector3(infoCenter.x + 0.7, infoCenter.y + 0.45, infoCenter.z + 0.35)
           ),
         });
       }
@@ -1059,18 +1079,16 @@ function XRInteractionSystem({
       }
     }
 
-    // ── When panel is CLOSED: test only INFO/link and LCD/video zones
-    if (!selectedBooth) {
-      for (const { booth, kind, box } of boothHitZones) {
-        if (ray.intersectBox(box, aabbTarget)) {
-          const dist = cPos.distanceTo(aabbTarget);
-          if (dist < closestDist) {
-            closestDist = dist;
-            closestPoint = aabbTarget.clone();
-            hitActionRef.current = kind === 'info'
-              ? () => onOpenOverlay(booth.websiteUrl, booth.companyName)
-              : () => onToggleYoutubeVideo(booth);
-          }
+    // ── Always test INFO/link and LCD/video zones in the physical booth.
+    for (const { booth, kind, box } of boothHitZones) {
+      if (ray.intersectBox(box, aabbTarget)) {
+        const dist = cPos.distanceTo(aabbTarget);
+        if (dist < closestDist) {
+          closestDist = dist;
+          closestPoint = aabbTarget.clone();
+          hitActionRef.current = kind === 'info'
+            ? () => openExternalLink(booth.websiteUrl, true)
+            : () => onToggleYoutubeVideo(booth);
         }
       }
     }
@@ -1816,7 +1834,6 @@ export default function ExhibitionCanvas({
               booth={booth}
               active={activeBoothId === booth.id}
               onSelect={() => onSelectBooth(booth)}
-              onOpenLink={handleOpenOverlay}
               isYoutubePlaying={activeYoutubeBoothId === booth.id}
               onToggleYoutubeVideo={handleToggleYoutubeVideo}
             />
