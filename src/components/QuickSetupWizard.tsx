@@ -6,7 +6,7 @@ import {
 import { Booth, Hall } from '../types';
 import { computeAutoLayout } from '../utils/autoLayout';
 import { db } from '../lib/firebase';
-import { doc, setDoc, deleteDoc, collection, getDocs } from 'firebase/firestore';
+import { doc, writeBatch, collection, getDocs } from 'firebase/firestore';
 
 // ─── Placeholder data pools ───────────────────────────────────────────────────
 const COLORS = [
@@ -98,6 +98,7 @@ export default function QuickSetupWizard({
   const [building, setBuilding] = useState(false);
   const [progress, setProgress] = useState(0);
   const [done, setDone] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const preview = calcPreview(boothCount);
 
@@ -109,43 +110,79 @@ export default function QuickSetupWizard({
   const handleBuild = async () => {
     setBuilding(true);
     setProgress(0);
+    setErrorMsg(null);
 
     try {
-      // 1. Delete existing booths
-      const boothsSnap = await getDocs(
-        collection(db, 'halls', hall.id, 'booths')
-      );
-      const deletions = boothsSnap.docs.map(d => deleteDoc(d.ref));
-      await Promise.all(deletions);
-      setProgress(15);
+      // 1. Read existing booths (to delete them)
+      const boothsSnap = await getDocs(collection(db, 'halls', hall.id, 'booths'));
+      setProgress(10);
 
-      // 2. Generate new booths and apply layout
+      // 2. Generate new booths + auto-layout (pure local computation)
       const rawBooths = generateBooths(boothCount, hall.id);
       const newHallBase: Hall = { ...hall, name: hallName.trim() || hall.name };
       const { booths: arranged, hall: newHall } = computeAutoLayout(rawBooths, newHallBase);
-      setProgress(35);
+      setProgress(25);
 
-      // 3. Save updated hall
-      await setDoc(doc(db, 'halls', hall.id), newHall);
-      onUpdateHall(newHall);
-      setProgress(50);
+      // 3. Commit everything in atomic WriteBatch chunks (Firestore limit = 500 ops/batch)
+      //    We chunk at 400 to leave headroom for the hall doc + deletes.
+      const MAX_OPS = 400;
+      let currentBatch = writeBatch(db);
+      let opCount = 0;
+      const batches: ReturnType<typeof writeBatch>[] = [currentBatch];
 
-      // 4. Save booths in parallel batches of 10
-      const BATCH = 10;
-      for (let i = 0; i < arranged.length; i += BATCH) {
-        const slice = arranged.slice(i, i + BATCH);
-        await Promise.all(
-          slice.map(b => setDoc(doc(db, 'halls', hall.id, 'booths', b.id), b))
-        );
-        setProgress(50 + Math.round(((i + BATCH) / arranged.length) * 48));
+      const addOp = (fn: (b: ReturnType<typeof writeBatch>) => void) => {
+        if (opCount >= MAX_OPS) {
+          currentBatch = writeBatch(db);
+          batches.push(currentBatch);
+          opCount = 0;
+        }
+        fn(currentBatch);
+        opCount++;
+      };
+
+      // Delete old booths
+      boothsSnap.docs.forEach(d => addOp(b => b.delete(d.ref)));
+
+      // Write hall doc
+      addOp(b => b.set(doc(db, 'halls', hall.id), newHall));
+
+      // Write new booth docs
+      arranged.forEach(booth =>
+        addOp(b => b.set(doc(db, 'halls', hall.id, 'booths', booth.id), booth))
+      );
+
+      setProgress(40);
+
+      // Commit each batch sequentially and update progress
+      for (let i = 0; i < batches.length; i++) {
+        await batches[i].commit();
+        setProgress(40 + Math.round(((i + 1) / batches.length) * 58));
       }
+
+      onUpdateHall(newHall);
       onUpdateBooths(arranged);
       setProgress(100);
       setDone(true);
-    } catch (err) {
-      console.error('QuickSetup failed:', err);
-      alert('Build failed — check your Firebase connection and try again.');
+
+    } catch (err: unknown) {
+      const code = (err as { code?: string }).code ?? '';
+      const raw  = (err as { message?: string }).message ?? String(err);
+
+      let friendly = `خطا: ${raw}`;
+      if (code === 'permission-denied') {
+        friendly = 'دسترسی رد شد (permission-denied).\n\nدر Firebase Console → Firestore → Rules این قانون را اضافه کنید:\nallow write: if request.auth != null;';
+      } else if (code === 'unauthenticated') {
+        friendly = 'برای ذخیره در Firebase باید وارد حساب ادمین شوید.';
+      } else if (code === 'unavailable' || raw.includes('offline')) {
+        friendly = 'اتصال به Firebase برقرار نیست. اینترنت را بررسی کنید.';
+      } else if (code === 'not-found') {
+        friendly = 'سالن در Firebase پیدا نشد. ابتدا سالن را ذخیره کنید.';
+      }
+
+      console.error('[QuickSetupWizard]', code, raw);
+      setErrorMsg(friendly);
       setBuilding(false);
+      setStep(2); // برگشت به مرحله ۲ تا کاربر دوباره تلاش کند
     }
   };
 
@@ -268,6 +305,24 @@ export default function QuickSetupWizard({
             <p className="text-xs text-neutral-500 font-mono text-center">
               اسم این سالن نمایشگاه را بنویسید
             </p>
+
+            {/* Error display — shown when Firebase write fails */}
+            {errorMsg && (
+              <div className="bg-red-50 border border-red-200 rounded-xl p-4 space-y-2">
+                <p className="text-xs font-bold text-red-600 flex items-center gap-1.5">
+                  ⚠️ خطا در ذخیره‌سازی
+                </p>
+                <p className="text-[11px] text-red-500 whitespace-pre-line leading-relaxed">
+                  {errorMsg}
+                </p>
+                <button
+                  onClick={() => setErrorMsg(null)}
+                  className="text-[10px] font-mono text-red-400 underline cursor-pointer"
+                >
+                  بستن
+                </button>
+              </div>
+            )}
 
             <div className="space-y-1.5">
               <label className="text-[10px] font-mono text-neutral-400 uppercase tracking-widest block">
