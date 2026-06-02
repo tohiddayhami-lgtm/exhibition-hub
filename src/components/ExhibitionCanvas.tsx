@@ -35,6 +35,10 @@ type PdfPanelState = {
   page: number;
   zoom: number;
 };
+type YouTubeLCDCommand = {
+  type: 'toggle' | 'seek';
+  deltaSeconds?: number;
+};
 
 function getNavigatorXR() {
   return (navigator as Navigator & { xr?: XRSystemLike }).xr;
@@ -162,6 +166,10 @@ function toYouTubeEmbed(id: string) {
   return `https://www.youtube.com/embed/${id}?autoplay=1&enablejsapi=1&playsinline=1&rel=0&modestbranding=1&origin=${origin}`;
 }
 
+function dispatchYouTubeLCDCommand(command: YouTubeLCDCommand) {
+  window.dispatchEvent(new CustomEvent<YouTubeLCDCommand>('exhibition-youtube-command', { detail: command }));
+}
+
 function getBoothPdfUrl(booth: Booth, side: PdfPanelSide) {
   return side === 'left' ? booth.catalogUrl || '' : booth.pdfRightUrl || '';
 }
@@ -228,7 +236,10 @@ function LCDButton({
   return (
     <group position={[x, y, 0]}>
       <mesh
-        onClick={onClick}
+        onClick={(e) => {
+          e.stopPropagation();
+          onClick();
+        }}
         onPointerOver={() => setHov(true)}
         onPointerOut={() => setHov(false)}
       >
@@ -248,11 +259,13 @@ function YouTubeLCDScreen({
   ytId,
   isPlaying,
   onToggleVideo,
+  onSeekVideo,
 }: {
   booth: Booth;
   ytId: string;
   isPlaying: boolean;
   onToggleVideo: () => void;
+  onSeekVideo: (deltaSeconds: number) => void;
 }) {
   const [thumbTex, setThumbTex] = useState<THREE.Texture | null>(null);
 
@@ -267,6 +280,10 @@ function YouTubeLCDScreen({
   const screenW = Math.min(booth.width * 0.72, 3.2);
   const screenH = screenW * (9 / 16);
   const posY = booth.height * 0.42;
+  const barH = 0.3;
+  const btnW = screenW * 0.28;
+  const btnH = barH * 0.78;
+  const btnY = -(screenH / 2 + barH / 2 + 0.04);
   const toggle = (e?: { stopPropagation: () => void }) => {
     e?.stopPropagation();
     onToggleVideo();
@@ -307,6 +324,40 @@ function YouTubeLCDScreen({
         <planeGeometry args={[screenW + 0.06, screenH + 0.05]} />
         <meshBasicMaterial color={isPlaying ? '#16a34a' : booth.themeColor || '#334155'} transparent opacity={isPlaying ? 0.35 : 0.2} />
       </mesh>
+      <mesh position={[0, btnY, 0.042]}>
+        <planeGeometry args={[screenW, barH]} />
+        <meshStandardMaterial color="#0d1117" roughness={0} metalness={0.6} transparent opacity={0.95} />
+      </mesh>
+      <LCDButton
+        label="-30s"
+        color="#1e293b"
+        textColor="#94a3b8"
+        x={-(btnW + 0.08)}
+        y={btnY}
+        w={btnW}
+        h={btnH}
+        onClick={() => onSeekVideo(-30)}
+      />
+      <LCDButton
+        label={isPlaying ? 'Pause' : 'Play'}
+        color={isPlaying ? '#14532d' : '#1e293b'}
+        textColor={isPlaying ? '#4ade80' : '#e2e8f0'}
+        x={0}
+        y={btnY}
+        w={btnW}
+        h={btnH}
+        onClick={onToggleVideo}
+      />
+      <LCDButton
+        label="+30s"
+        color="#1e293b"
+        textColor="#94a3b8"
+        x={btnW + 0.08}
+        y={btnY}
+        w={btnW}
+        h={btnH}
+        onClick={() => onSeekVideo(30)}
+      />
     </group>
   );
 }
@@ -435,10 +486,12 @@ function VideoLCDScreen({
   booth,
   isYoutubePlaying,
   onToggleYoutubeVideo,
+  onSeekYoutubeVideo,
 }: {
   booth: Booth;
   isYoutubePlaying: boolean;
   onToggleYoutubeVideo: () => void;
+  onSeekYoutubeVideo: (deltaSeconds: number) => void;
 }) {
   const url = booth.videoUrl;
 
@@ -455,6 +508,7 @@ function VideoLCDScreen({
         ytId={ytId}
         isPlaying={isYoutubePlaying}
         onToggleVideo={onToggleYoutubeVideo}
+        onSeekVideo={onSeekYoutubeVideo}
       />
     );
   }
@@ -717,6 +771,7 @@ function BoothStructure({
   onSelect,
   isYoutubePlaying,
   onToggleYoutubeVideo,
+  onSeekYoutubeVideo,
   leftPdfState,
   rightPdfState,
   updatePdfPanel,
@@ -726,6 +781,7 @@ function BoothStructure({
   onSelect: () => void;
   isYoutubePlaying: boolean;
   onToggleYoutubeVideo: (booth: Booth) => void;
+  onSeekYoutubeVideo: (booth: Booth, deltaSeconds: number) => void;
   leftPdfState: PdfPanelState;
   rightPdfState: PdfPanelState;
   updatePdfPanel: (boothId: string, side: PdfPanelSide, patch: Partial<PdfPanelState>) => void;
@@ -906,6 +962,7 @@ function BoothStructure({
         booth={booth}
         isYoutubePlaying={isYoutubePlaying}
         onToggleYoutubeVideo={() => onToggleYoutubeVideo(booth)}
+        onSeekYoutubeVideo={(deltaSeconds) => onSeekYoutubeVideo(booth, deltaSeconds)}
       />
 
       {/* 8. SIDE PDF PANELS — replaces the old center placeholder object */}
@@ -1151,7 +1208,7 @@ function XRInteractionSystem({
   onCloseBooth,
   onOpenOverlay,
   onToggleYoutubeVideo,
-  activeYoutubeBoothId,
+  onSeekYoutubeVideo,
   adjustPdfPanel,
 }: {
   booths: Booth[];
@@ -1159,7 +1216,7 @@ function XRInteractionSystem({
   onCloseBooth: () => void;
   onOpenOverlay: (url: string, title: string) => void;
   onToggleYoutubeVideo: (booth: Booth) => void;
-  activeYoutubeBoothId: string | null;
+  onSeekYoutubeVideo: (booth: Booth, deltaSeconds: number) => void;
   adjustPdfPanel: (boothId: string, side: PdfPanelSide, pageDelta: number, zoomDelta: number) => void;
 }) {
   const { gl } = useThree();
@@ -1197,7 +1254,9 @@ function XRInteractionSystem({
         booth: Booth;
         kind:
           | 'info'
-          | 'youtube'
+          | 'youtube-back'
+          | 'youtube-toggle'
+          | 'youtube-forward'
           | 'pdf-left-prev'
           | 'pdf-left-next'
           | 'pdf-left-zoom-out'
@@ -1221,13 +1280,25 @@ function XRInteractionSystem({
       }
 
       if (getYouTubeId(booth.videoUrl || '')) {
-        zones.push({
-          booth,
-          kind: 'youtube',
-          box: new THREE.Box3(
-            new THREE.Vector3(lcdCenter.x - screenW * 0.28, lcdCenter.y - screenH * 0.28, lcdCenter.z - 0.06),
-            new THREE.Vector3(lcdCenter.x + screenW * 0.28, lcdCenter.y + screenH * 0.28, lcdCenter.z + 0.06)
-          ),
+        const barH = 0.3;
+        const btnW = screenW * 0.28;
+        const btnH = barH * 0.78;
+        const btnY = booth.height * 0.42 - (screenH / 2 + barH / 2 + 0.04);
+        const controls = [
+          { kind: 'youtube-back', x: booth.posX - (btnW + 0.08) },
+          { kind: 'youtube-toggle', x: booth.posX },
+          { kind: 'youtube-forward', x: booth.posX + btnW + 0.08 },
+        ] as const;
+
+        controls.forEach((control) => {
+          zones.push({
+            booth,
+            kind: control.kind,
+            box: new THREE.Box3(
+              new THREE.Vector3(control.x - btnW / 2, btnY - btnH / 2, lcdCenter.z - 0.08),
+              new THREE.Vector3(control.x + btnW / 2, btnY + btnH / 2, lcdCenter.z + 0.08)
+            ),
+          });
         });
       }
 
@@ -1322,8 +1393,6 @@ function XRInteractionSystem({
 
     // ── Always test INFO/link and LCD/video zones in the physical booth.
     for (const { booth, kind, box } of boothHitZones) {
-      if (kind === 'youtube' && activeYoutubeBoothId) continue;
-
       if (ray.intersectBox(box, aabbTarget)) {
         const dist = cPos.distanceTo(aabbTarget);
         if (dist < closestDist) {
@@ -1331,8 +1400,12 @@ function XRInteractionSystem({
           closestPoint = aabbTarget.clone();
           if (kind === 'info') {
             hitActionRef.current = () => openLinkInNewWindow(booth.websiteUrl);
-          } else if (kind === 'youtube') {
+          } else if (kind === 'youtube-toggle') {
             hitActionRef.current = () => onToggleYoutubeVideo(booth);
+          } else if (kind === 'youtube-back') {
+            hitActionRef.current = () => onSeekYoutubeVideo(booth, -30);
+          } else if (kind === 'youtube-forward') {
+            hitActionRef.current = () => onSeekYoutubeVideo(booth, 30);
           } else {
             const side: PdfPanelSide = kind.includes('left') ? 'left' : 'right';
             if (kind.endsWith('prev')) {
@@ -1806,6 +1879,24 @@ function VRBrowserPanel({ url, title, onClose }: { url: string; title: string; o
     }
   };
 
+  useEffect(() => {
+    if (!isYouTube) return;
+
+    const handleLCDCommand = (event: Event) => {
+      const command = (event as CustomEvent<YouTubeLCDCommand>).detail;
+      if (!command) return;
+
+      if (command.type === 'toggle') {
+        toggleYouTubePlayback();
+      } else if (command.type === 'seek') {
+        seekYouTube(command.deltaSeconds ?? 0);
+      }
+    };
+
+    window.addEventListener('exhibition-youtube-command', handleLCDCommand);
+    return () => window.removeEventListener('exhibition-youtube-command', handleLCDCommand);
+  }, [isYouTube, youtubePlaying, youtubeSeconds]);
+
   const pdfBaseUrl = url.split('#')[0];
   const pdfViewerUrl = getPdfViewerUrl(pdfBaseUrl, pdfPage, pdfZoom);
 
@@ -2090,6 +2181,7 @@ export default function ExhibitionCanvas({
   const [povEnabled, setPovEnabled] = useState(false);
   const [xrActive, setXrActive] = useState(false);
   const [activeYoutubeBoothId, setActiveYoutubeBoothId] = useState<string | null>(null);
+  const [youtubePlaying, setYoutubePlaying] = useState(false);
   const [pdfPanelStates, setPdfPanelStates] = useState<Record<string, PdfPanelState>>({});
 
   // VR Browser Overlay state
@@ -2131,6 +2223,7 @@ export default function ExhibitionCanvas({
 
   const handleOpenOverlay = useCallback((url: string, title: string) => {
     setActiveYoutubeBoothId(null);
+    setYoutubePlaying(false);
     setVrOverlayUrl(url);
     setVrOverlayTitle(title);
   }, []);
@@ -2141,14 +2234,34 @@ export default function ExhibitionCanvas({
 
     setActiveYoutubeBoothId((currentBoothId) => {
       if (currentBoothId === booth.id) {
-        setVrOverlayUrl(null);
-        return null;
+        dispatchYouTubeLCDCommand({ type: 'toggle' });
+        setYoutubePlaying((playing) => !playing);
+        return currentBoothId;
       }
 
       setVrOverlayUrl(toYouTubeEmbed(ytId));
       setVrOverlayTitle(`${booth.companyName} - YouTube`);
+      setYoutubePlaying(true);
       return booth.id;
     });
+  }, []);
+
+  const handleSeekYoutubeVideo = useCallback((booth: Booth, deltaSeconds: number) => {
+    const ytId = getYouTubeId(booth.videoUrl || '');
+    if (!ytId) return;
+
+    setActiveYoutubeBoothId((currentBoothId) => {
+      if (currentBoothId !== booth.id) {
+        setVrOverlayUrl(toYouTubeEmbed(ytId));
+        setVrOverlayTitle(`${booth.companyName} - YouTube`);
+        window.setTimeout(() => dispatchYouTubeLCDCommand({ type: 'seek', deltaSeconds }), 250);
+        return booth.id;
+      }
+
+      dispatchYouTubeLCDCommand({ type: 'seek', deltaSeconds });
+      return currentBoothId;
+    });
+    setYoutubePlaying(true);
   }, []);
 
   // Walk on floor click trigger
@@ -2191,6 +2304,7 @@ export default function ExhibitionCanvas({
           onClose={() => {
             setVrOverlayUrl(null);
             setActiveYoutubeBoothId(null);
+            setYoutubePlaying(false);
           }}
         />,
         vrOverlayRef.current
@@ -2260,8 +2374,9 @@ export default function ExhibitionCanvas({
               booth={booth}
               active={activeBoothId === booth.id}
               onSelect={() => onSelectBooth(booth)}
-              isYoutubePlaying={activeYoutubeBoothId === booth.id}
+              isYoutubePlaying={activeYoutubeBoothId === booth.id && youtubePlaying}
               onToggleYoutubeVideo={handleToggleYoutubeVideo}
+              onSeekYoutubeVideo={handleSeekYoutubeVideo}
               leftPdfState={getPdfPanelState(booth.id, 'left')}
               rightPdfState={getPdfPanelState(booth.id, 'right')}
               updatePdfPanel={updatePdfPanel}
@@ -2310,7 +2425,7 @@ export default function ExhibitionCanvas({
             onCloseBooth={onCloseBooth}
             onOpenOverlay={handleOpenOverlay}
             onToggleYoutubeVideo={handleToggleYoutubeVideo}
-            activeYoutubeBoothId={activeYoutubeBoothId}
+            onSeekYoutubeVideo={handleSeekYoutubeVideo}
             adjustPdfPanel={adjustPdfPanel}
           />
         )}
