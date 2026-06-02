@@ -15,6 +15,17 @@ interface AdminPanelProps {
   onAddSampleData: () => void;
 }
 
+function getDefaultPdfPlacement(side: 'left' | 'right', width: number, depth: number, height: number) {
+  const sideSign = side === 'left' ? -1 : 1;
+  const panelW = Math.min(1.55, Math.max(1.15, depth * 0.38));
+  return {
+    x: Number((sideSign * (width / 2 - panelW / 2 - 0.18)).toFixed(2)),
+    y: Number(Math.min(height * 0.54, 1.95).toFixed(2)),
+    z: Number((depth / 2 - 0.72).toFixed(2)),
+    yaw: side === 'left' ? 15 : -15,
+  };
+}
+
 export default function AdminPanel({
   hall,
   booths,
@@ -55,6 +66,16 @@ export default function AdminPanel({
   const [bVideo, setBVideo] = useState('');
   const [bCatalog, setBCatalog] = useState('');
   const [bPdfRight, setBPdfRight] = useState('');
+  const defaultLeftPdf = getDefaultPdfPlacement('left', 4, 3, 3);
+  const defaultRightPdf = getDefaultPdfPlacement('right', 4, 3, 3);
+  const [bPdfLeftX, setBPdfLeftX] = useState(defaultLeftPdf.x);
+  const [bPdfLeftY, setBPdfLeftY] = useState(defaultLeftPdf.y);
+  const [bPdfLeftZ, setBPdfLeftZ] = useState(defaultLeftPdf.z);
+  const [bPdfLeftYaw, setBPdfLeftYaw] = useState(defaultLeftPdf.yaw);
+  const [bPdfRightX, setBPdfRightX] = useState(defaultRightPdf.x);
+  const [bPdfRightY, setBPdfRightY] = useState(defaultRightPdf.y);
+  const [bPdfRightZ, setBPdfRightZ] = useState(defaultRightPdf.z);
+  const [bPdfRightYaw, setBPdfRightYaw] = useState(defaultRightPdf.yaw);
   const [bPreset, setBPreset] = useState<'classic' | 'modern' | 'minimalist' | 'futuristic'>('modern');
   const [customModelFilename, setCustomModelFilename] = useState('');
   const [customModelUrl, setCustomModelUrl] = useState('');
@@ -118,6 +139,16 @@ export default function AdminPanel({
     setBVideo('');
     setBCatalog('');
     setBPdfRight('');
+    const leftPdf = getDefaultPdfPlacement('left', 4, 3, 3);
+    const rightPdf = getDefaultPdfPlacement('right', 4, 3, 3);
+    setBPdfLeftX(leftPdf.x);
+    setBPdfLeftY(leftPdf.y);
+    setBPdfLeftZ(leftPdf.z);
+    setBPdfLeftYaw(leftPdf.yaw);
+    setBPdfRightX(rightPdf.x);
+    setBPdfRightY(rightPdf.y);
+    setBPdfRightZ(rightPdf.z);
+    setBPdfRightYaw(rightPdf.yaw);
     setBPreset('modern');
     setCustomModelFilename('');
     setCustomModelUrl('');
@@ -146,6 +177,16 @@ export default function AdminPanel({
     setBVideo(booth.videoUrl || '');
     setBCatalog(booth.catalogUrl || '');
     setBPdfRight(booth.pdfRightUrl || '');
+    const leftPdf = getDefaultPdfPlacement('left', booth.width, booth.depth, booth.height);
+    const rightPdf = getDefaultPdfPlacement('right', booth.width, booth.depth, booth.height);
+    setBPdfLeftX(booth.pdfLeftX ?? leftPdf.x);
+    setBPdfLeftY(booth.pdfLeftY ?? leftPdf.y);
+    setBPdfLeftZ(booth.pdfLeftZ ?? leftPdf.z);
+    setBPdfLeftYaw(booth.pdfLeftYaw ?? leftPdf.yaw);
+    setBPdfRightX(booth.pdfRightX ?? rightPdf.x);
+    setBPdfRightY(booth.pdfRightY ?? rightPdf.y);
+    setBPdfRightZ(booth.pdfRightZ ?? rightPdf.z);
+    setBPdfRightYaw(booth.pdfRightYaw ?? rightPdf.yaw);
     setBPreset(booth.stylePreset);
     setCustomModelUrl(booth.modelUrl || '');
     setCustomModelFilename(booth.modelUrl ? 'custom_model.glb' : '');
@@ -233,8 +274,24 @@ export default function AdminPanel({
       stylePreset: bPreset,
       modelScale:  1.0,
       // Optional fields: omit entirely when empty — Firestore rejects `undefined`
-      ...(bCatalog.trim()  ? { catalogUrl: bCatalog.trim() }    : {}),
-      ...(bPdfRight.trim() ? { pdfRightUrl: bPdfRight.trim() }   : {}),
+      ...(bCatalog.trim()
+        ? {
+            catalogUrl: bCatalog.trim(),
+            pdfLeftX: Number(bPdfLeftX),
+            pdfLeftY: Number(bPdfLeftY),
+            pdfLeftZ: Number(bPdfLeftZ),
+            pdfLeftYaw: Number(bPdfLeftYaw),
+          }
+        : {}),
+      ...(bPdfRight.trim()
+        ? {
+            pdfRightUrl: bPdfRight.trim(),
+            pdfRightX: Number(bPdfRightX),
+            pdfRightY: Number(bPdfRightY),
+            pdfRightZ: Number(bPdfRightZ),
+            pdfRightYaw: Number(bPdfRightYaw),
+          }
+        : {}),
       ...(customModelUrl   ? { modelUrl:   customModelUrl }     : {}),
       createdAt:   new Date().toISOString(),
       updatedAt:   new Date().toISOString(),
@@ -269,6 +326,91 @@ export default function AdminPanel({
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const renderPdfPlacementControls = (
+    side: 'left' | 'right',
+    values: { x: number; y: number; z: number; yaw: number },
+    setters: {
+      setX: React.Dispatch<React.SetStateAction<number>>;
+      setY: React.Dispatch<React.SetStateAction<number>>;
+      setZ: React.Dispatch<React.SetStateAction<number>>;
+      setYaw: React.Dispatch<React.SetStateAction<number>>;
+    }
+  ) => {
+    const reset = getDefaultPdfPlacement(side, Number(bWidth) || 4, Number(bDepth) || 3, Number(bHeight) || 3);
+    const label = side === 'left' ? 'Left PDF placement' : 'Right PDF placement';
+
+    return (
+      <div className="mt-3 p-3 bg-white border border-[#E0E4E8] rounded-md space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-[10px] font-mono font-bold uppercase tracking-widest text-[#1A1D21]">
+            {label}
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              setters.setX(reset.x);
+              setters.setY(reset.y);
+              setters.setZ(reset.z);
+              setters.setYaw(reset.yaw);
+            }}
+            className="text-[10px] font-mono font-bold text-neutral-500 border border-[#E0E4E8] rounded px-2 py-1 hover:bg-neutral-50"
+          >
+            Reset near front pillar
+          </button>
+        </div>
+        <p className="text-[10px] text-neutral-500 leading-relaxed">
+          X = چپ/راست، Y = بالا/پایین، Z = جلو/عقب، Angle = زاویه پنل داخل غرفه.
+        </p>
+        <div className="grid grid-cols-4 gap-2">
+          <div>
+            <label className="block text-[9px] font-mono text-neutral-500 uppercase mb-1 font-bold">X</label>
+            <input
+              type="number"
+              step={0.1}
+              value={values.x}
+              onChange={(e) => setters.setX(Number(e.target.value))}
+              className="w-full bg-[#F8F9FA] border border-[#E0E4E8] text-xs rounded p-2 text-center text-[#1A1D21]"
+            />
+          </div>
+          <div>
+            <label className="block text-[9px] font-mono text-neutral-500 uppercase mb-1 font-bold">Y</label>
+            <input
+              type="number"
+              step={0.1}
+              min={0.5}
+              max={Number(bHeight) + 1}
+              value={values.y}
+              onChange={(e) => setters.setY(Number(e.target.value))}
+              className="w-full bg-[#F8F9FA] border border-[#E0E4E8] text-xs rounded p-2 text-center text-[#1A1D21]"
+            />
+          </div>
+          <div>
+            <label className="block text-[9px] font-mono text-neutral-500 uppercase mb-1 font-bold">Z</label>
+            <input
+              type="number"
+              step={0.1}
+              value={values.z}
+              onChange={(e) => setters.setZ(Number(e.target.value))}
+              className="w-full bg-[#F8F9FA] border border-[#E0E4E8] text-xs rounded p-2 text-center text-[#1A1D21]"
+            />
+          </div>
+          <div>
+            <label className="block text-[9px] font-mono text-neutral-500 uppercase mb-1 font-bold">Angle</label>
+            <input
+              type="number"
+              step={1}
+              min={-75}
+              max={75}
+              value={values.yaw}
+              onChange={(e) => setters.setYaw(Number(e.target.value))}
+              className="w-full bg-[#F8F9FA] border border-[#E0E4E8] text-xs rounded p-2 text-center text-[#1A1D21]"
+            />
+          </div>
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -766,6 +908,16 @@ export default function AdminPanel({
                       placeholder="https://example.com/left-catalog.pdf"
                       className="w-full bg-white border border-[#E0E4E8] rounded p-2 text-[#1A1D21] focus:outline-none"
                     />
+                    {renderPdfPlacementControls(
+                      'left',
+                      { x: bPdfLeftX, y: bPdfLeftY, z: bPdfLeftZ, yaw: bPdfLeftYaw },
+                      {
+                        setX: setBPdfLeftX,
+                        setY: setBPdfLeftY,
+                        setZ: setBPdfLeftZ,
+                        setYaw: setBPdfLeftYaw,
+                      }
+                    )}
                   </div>
                   <div>
                     <label className="block text-[10px] font-mono text-neutral-450 uppercase mb-1 font-bold">
@@ -778,6 +930,16 @@ export default function AdminPanel({
                       placeholder="https://example.com/right-catalog.pdf"
                       className="w-full bg-white border border-[#E0E4E8] rounded p-2 text-[#1A1D21] focus:outline-none"
                     />
+                    {renderPdfPlacementControls(
+                      'right',
+                      { x: bPdfRightX, y: bPdfRightY, z: bPdfRightZ, yaw: bPdfRightYaw },
+                      {
+                        setX: setBPdfRightX,
+                        setY: setBPdfRightY,
+                        setZ: setBPdfRightZ,
+                        setYaw: setBPdfRightYaw,
+                      }
+                    )}
                   </div>
                 </div>
               </div>

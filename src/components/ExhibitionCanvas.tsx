@@ -40,6 +40,28 @@ type YouTubeLCDCommand = {
   deltaSeconds?: number;
 };
 
+function getPdfPanelPlacement(booth: Booth, side: PdfPanelSide, panelW: number) {
+  const sideSign = side === 'left' ? -1 : 1;
+  const fallback = {
+    x: sideSign * (booth.width / 2 - panelW / 2 - 0.18),
+    y: Math.min(booth.height * 0.54, 1.95),
+    z: booth.depth / 2 - 0.72,
+    yaw: side === 'left' ? 15 : -15,
+  };
+
+  const x = side === 'left' ? booth.pdfLeftX ?? fallback.x : booth.pdfRightX ?? fallback.x;
+  const y = side === 'left' ? booth.pdfLeftY ?? fallback.y : booth.pdfRightY ?? fallback.y;
+  const z = side === 'left' ? booth.pdfLeftZ ?? fallback.z : booth.pdfRightZ ?? fallback.z;
+  const yaw = side === 'left' ? booth.pdfLeftYaw ?? fallback.yaw : booth.pdfRightYaw ?? fallback.yaw;
+
+  return {
+    x,
+    y,
+    z,
+    yaw: THREE.MathUtils.degToRad(yaw),
+  };
+}
+
 function getNavigatorXR() {
   return (navigator as Navigator & { xr?: XRSystemLike }).xr;
 }
@@ -607,13 +629,9 @@ function BoothPdfPanel({
   const textureRef = useRef<THREE.CanvasTexture | null>(null);
 
   const col = booth.themeColor || '#2563eb';
-  const sideSign = side === 'left' ? -1 : 1;
   const panelW = Math.min(1.55, Math.max(1.15, booth.depth * 0.38));
   const panelH = panelW * 1.414; // A4 portrait ratio
-  const panelY = Math.min(booth.height * 0.54, 1.95);
-  const panelX = sideSign * (booth.width / 2 - panelW / 2 - 0.18);
-  const panelZ = booth.depth / 2 - 0.52;
-  const panelYaw = side === 'left' ? Math.PI / 12 : -Math.PI / 12;
+  const placement = getPdfPanelPlacement(booth, side, panelW);
 
   useEffect(() => {
     if (!url) return;
@@ -711,8 +729,8 @@ function BoothPdfPanel({
 
   return (
     <group
-      position={[panelX, panelY, panelZ]}
-      rotation={[0, panelYaw, 0]}
+      position={[placement.x, placement.y, placement.z]}
+      rotation={[0, placement.yaw, 0]}
     >
       <mesh onClick={(e) => e.stopPropagation()}>
         <boxGeometry args={[panelW + 0.1, panelH + 0.42, 0.06]} />
@@ -1339,13 +1357,10 @@ function XRInteractionSystem({
 
       (['left', 'right'] as const).forEach((side) => {
         if (!getBoothPdfUrl(booth, side)) return;
-        const sideSign = side === 'left' ? -1 : 1;
         const panelW = Math.min(1.55, Math.max(1.15, booth.depth * 0.38));
         const panelH = panelW * 1.414;
-        const panelY = Math.min(booth.height * 0.54, 1.95);
-        const panelX = booth.posX + sideSign * (booth.width / 2 - panelW / 2 - 0.18);
-        const panelZ = booth.posZ + booth.depth / 2 - 0.52;
-        const buttonY = panelY - (panelH / 2 + 0.12);
+        const placement = getPdfPanelPlacement(booth, side, panelW);
+        const buttonY = -(panelH / 2 + 0.12);
         const buttonKinds = [
           { localX: -0.48, suffix: 'prev' },
           { localX: -0.16, suffix: 'next' },
@@ -1354,13 +1369,22 @@ function XRInteractionSystem({
         ] as const;
 
         buttonKinds.forEach(({ localX, suffix }) => {
-          const buttonX = panelX + localX;
+          const localButtonCenter = new THREE.Vector3(localX, buttonY, 0.04).applyAxisAngle(
+            new THREE.Vector3(0, 1, 0),
+            placement.yaw
+          );
+          const buttonCenter = new THREE.Vector3(
+            booth.posX + placement.x + localButtonCenter.x,
+            placement.y + localButtonCenter.y,
+            booth.posZ + placement.z + localButtonCenter.z
+          );
+
           zones.push({
             booth,
             kind: `pdf-${side}-${suffix}` as typeof zones[number]['kind'],
             box: new THREE.Box3(
-              new THREE.Vector3(buttonX - 0.34, buttonY - 0.2, panelZ - 0.3),
-              new THREE.Vector3(buttonX + 0.34, buttonY + 0.2, panelZ + 0.3)
+              new THREE.Vector3(buttonCenter.x - 0.34, buttonCenter.y - 0.2, buttonCenter.z - 0.3),
+              new THREE.Vector3(buttonCenter.x + 0.34, buttonCenter.y + 0.2, buttonCenter.z + 0.3)
             ),
           });
         });

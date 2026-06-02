@@ -32,6 +32,14 @@ export interface Booth {
   videoUrl: string; // Direct MP4 URL played on the in-booth LCD screen
   catalogUrl?: string; // Left-side PDF/catalog URL shown in the in-hall viewer
   pdfRightUrl?: string; // Right-side PDF/catalog URL shown in the in-hall viewer
+  pdfLeftX?: number; // Left PDF local X offset inside booth
+  pdfLeftY?: number; // Left PDF height from floor
+  pdfLeftZ?: number; // Left PDF local Z offset inside booth
+  pdfLeftYaw?: number; // Left PDF rotation in degrees
+  pdfRightX?: number; // Right PDF local X offset inside booth
+  pdfRightY?: number; // Right PDF height from floor
+  pdfRightZ?: number; // Right PDF local Z offset inside booth
+  pdfRightYaw?: number; // Right PDF rotation in degrees
   stylePreset: 'classic' | 'modern' | 'minimalist' | 'futuristic';
   modelUrl?: string; // Optional custom loaded GLB/GLTF file URL
   modelScale?: number; // Scale multiplier for GLB
