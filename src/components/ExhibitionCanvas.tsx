@@ -32,6 +32,7 @@ interface ExhibitionCanvasProps {
   booths: Booth[];
   activeBoothId: string | null;
   onSelectBooth: (booth: Booth) => void;
+  onCloseBooth: () => void;
   visitorPos: [number, number, number];
   setVisitorPos: (pos: [number, number, number]) => void;
 }
@@ -616,29 +617,43 @@ function XRLocomotionController({
   return null;
 }
 
-// Quest 3 right-controller laser ray — points, highlights, trigger selects booth
-function XRControllerRay({
+// Combined VR interaction: laser ray from right controller + in-world info panel with clickable buttons
+// DOM modals are invisible in WebXR — this renders everything in WebGL so the headset can see it
+function XRInteractionSystem({
   booths,
+  selectedBooth,
   onSelectBooth,
+  onCloseBooth,
 }: {
   booths: Booth[];
+  selectedBooth: Booth | null;
   onSelectBooth: (booth: Booth) => void;
+  onCloseBooth: () => void;
 }) {
   const { gl } = useThree();
-  const beamGroupRef = useRef<THREE.Group>(null);
-  const beamMeshRef = useRef<THREE.Mesh>(null);
-  const dotRef = useRef<THREE.Mesh>(null);
-  const triggerWasDown = useRef(false);
-  const hitBoothRef = useRef<Booth | null>(null);
 
-  // Pre-compute axis-aligned bounding boxes for each booth (world space)
+  // Laser beam refs
+  const beamGroupRef = useRef<THREE.Group>(null);
+  const beamMeshRef  = useRef<THREE.Mesh>(null);
+  const dotRef       = useRef<THREE.Mesh>(null);
+
+  // Panel interactive button mesh refs (world-space, Billboard-rotated)
+  const websiteBtnRef   = useRef<THREE.Mesh>(null);
+  const whatsappBtnRef  = useRef<THREE.Mesh>(null);
+  const closeBtnRef     = useRef<THREE.Mesh>(null);
+
+  const triggerWasDown  = useRef(false);
+  const hitActionRef    = useRef<(() => void) | null>(null);
+  const raycasterRef    = useRef(new THREE.Raycaster());
+
+  // Booth AABBs (world-space, axis-aligned)
   const boothBoxes = useMemo(() =>
     booths.map(b => ({
       booth: b,
       box: new THREE.Box3(
-        new THREE.Vector3(b.posX - b.width / 2, 0, b.posZ - b.depth / 2),
+        new THREE.Vector3(b.posX - b.width / 2, 0,          b.posZ - b.depth / 2),
         new THREE.Vector3(b.posX + b.width / 2, b.height + 1.2, b.posZ + b.depth / 2)
-      )
+      ),
     })),
     [booths]
   );
@@ -646,96 +661,213 @@ function XRControllerRay({
   useFrame(() => {
     if (!gl.xr.isPresenting) {
       if (beamGroupRef.current) beamGroupRef.current.visible = false;
-      if (dotRef.current) dotRef.current.visible = false;
+      if (dotRef.current)       dotRef.current.visible = false;
       return;
     }
 
-    // Right controller = index 1
-    const controller = gl.xr.getController(1);
+    const controller = gl.xr.getController(1); // right controller
     if (!controller) return;
 
-    const controllerPos = new THREE.Vector3();
-    const controllerQuat = new THREE.Quaternion();
-    controller.getWorldPosition(controllerPos);
-    controller.getWorldQuaternion(controllerQuat);
-
-    // Ray shoots in controller's local -Z direction
-    const rayDir = new THREE.Vector3(0, 0, -1).applyQuaternion(controllerQuat).normalize();
+    const cPos = new THREE.Vector3();
+    const cQuat = new THREE.Quaternion();
+    controller.getWorldPosition(cPos);
+    controller.getWorldQuaternion(cQuat);
+    const rayDir = new THREE.Vector3(0, 0, -1).applyQuaternion(cQuat).normalize();
 
     if (beamGroupRef.current) {
       beamGroupRef.current.visible = true;
-      beamGroupRef.current.position.copy(controllerPos);
-      beamGroupRef.current.quaternion.copy(controllerQuat);
+      beamGroupRef.current.position.copy(cPos);
+      beamGroupRef.current.quaternion.copy(cQuat);
     }
 
-    // Intersect ray against booth AABBs
-    const ray = new THREE.Ray(controllerPos, rayDir);
-    const target = new THREE.Vector3();
-    let closestDist = Infinity;
-    let closestHit: { booth: Booth; point: THREE.Vector3 } | null = null;
+    raycasterRef.current.set(cPos, rayDir);
+    const ray = new THREE.Ray(cPos, rayDir);
+    const aabbTarget = new THREE.Vector3();
 
-    for (const { booth, box } of boothBoxes) {
-      if (ray.intersectBox(box, target)) {
-        const dist = controllerPos.distanceTo(target);
-        if (dist < closestDist) {
-          closestDist = dist;
-          closestHit = { booth, point: target.clone() };
+    let closestDist = Infinity;
+    let closestPoint: THREE.Vector3 | null = null;
+    hitActionRef.current = null;
+
+    // ── When panel is OPEN: test button meshes via full raycaster (handles Billboard rotation)
+    if (selectedBooth) {
+      const wa = (selectedBooth.whatsapp || '').replace(/\+/g, '');
+      const waLink = `https://api.whatsapp.com/send?phone=${wa}&text=Hello+${encodeURIComponent(selectedBooth.companyName)},+I+am+at+your+virtual+booth.`;
+
+      const panelButtons: { mesh: THREE.Mesh | null; action: () => void }[] = [
+        { mesh: websiteBtnRef.current,  action: () => window.open(selectedBooth.websiteUrl || '#', '_blank') },
+        { mesh: whatsappBtnRef.current, action: () => window.open(waLink, '_blank') },
+        { mesh: closeBtnRef.current,    action: onCloseBooth },
+      ];
+
+      for (const { mesh, action } of panelButtons) {
+        if (!mesh) continue;
+        const hits = raycasterRef.current.intersectObject(mesh, false);
+        if (hits.length > 0 && hits[0].distance < closestDist) {
+          closestDist = hits[0].distance;
+          closestPoint = hits[0].point.clone();
+          hitActionRef.current = action;
         }
       }
     }
 
-    hitBoothRef.current = closestHit?.booth ?? null;
+    // ── When panel is CLOSED: test booth AABBs
+    if (!selectedBooth) {
+      for (const { booth, box } of boothBoxes) {
+        if (ray.intersectBox(box, aabbTarget)) {
+          const dist = cPos.distanceTo(aabbTarget);
+          if (dist < closestDist) {
+            closestDist = dist;
+            closestPoint = aabbTarget.clone();
+            hitActionRef.current = () => onSelectBooth(booth);
+          }
+        }
+      }
+    }
 
-    // Update beam length & color
-    const beamLen = Math.min(closestHit ? closestDist : 10, 12);
+    // Update beam visual
+    const beamLen = Math.min(closestPoint ? closestDist : 10, 14);
     if (beamMeshRef.current) {
       beamMeshRef.current.scale.set(1, 1, beamLen);
       beamMeshRef.current.position.set(0, 0, -beamLen / 2);
       const mat = beamMeshRef.current.material as THREE.MeshBasicMaterial;
-      mat.color.setHex(closestHit ? 0x00e5ff : 0xffffff);
-      mat.opacity = closestHit ? 0.92 : 0.45;
+      mat.color.setHex(closestPoint ? 0x00e5ff : 0xffffff);
+      mat.opacity = closestPoint ? 0.95 : 0.4;
     }
-
-    // Move hit dot to intersection point
     if (dotRef.current) {
-      if (closestHit) {
-        dotRef.current.visible = true;
-        dotRef.current.position.copy(closestHit.point);
-      } else {
-        dotRef.current.visible = false;
-      }
+      if (closestPoint) { dotRef.current.visible = true; dotRef.current.position.copy(closestPoint); }
+      else              { dotRef.current.visible = false; }
     }
 
-    // Right trigger (button 0) → select hit booth
+    // Trigger → fire action
     const session = gl.xr.getSession();
     if (session) {
       let trigDown = false;
-      for (const source of session.inputSources) {
-        if (source.handedness === 'right' && source.gamepad) {
-          trigDown = source.gamepad.buttons[0]?.pressed ?? false;
+      for (const src of session.inputSources) {
+        if (src.handedness === 'right' && src.gamepad) {
+          trigDown = src.gamepad.buttons[0]?.pressed ?? false;
         }
       }
-      if (trigDown && !triggerWasDown.current && hitBoothRef.current) {
-        onSelectBooth(hitBoothRef.current);
+      if (trigDown && !triggerWasDown.current && hitActionRef.current) {
+        hitActionRef.current();
       }
       triggerWasDown.current = trigDown;
     }
   });
 
+  const booth = selectedBooth;
+  const PW = 2.2; // panel width (meters)
+  const PH = 1.65; // panel height
+
   return (
     <>
-      {/* Laser beam — thin box in controller's -Z direction, scales to hit or 10m */}
+      {/* ── LASER BEAM (controller -Z direction) */}
       <group ref={beamGroupRef} visible={false}>
         <mesh ref={beamMeshRef}>
           <boxGeometry args={[0.006, 0.006, 1]} />
-          <meshBasicMaterial color="#ffffff" transparent opacity={0.5} depthWrite={false} />
+          <meshBasicMaterial color="white" transparent opacity={0.4} depthWrite={false} />
         </mesh>
       </group>
-      {/* Hit indicator dot — world-space sphere at intersection */}
+      {/* Hit dot */}
       <mesh ref={dotRef} visible={false}>
         <sphereGeometry args={[0.055, 16, 16]} />
         <meshBasicMaterial color="#00e5ff" />
       </mesh>
+
+      {/* ── VR INFO PANEL — full WebGL, visible inside Quest headset */}
+      {booth && (
+        <Billboard position={[booth.posX, 1.8, booth.posZ + booth.depth / 2 + 2.2]}>
+
+          {/* Panel shadow/glow halo */}
+          <mesh position={[0, 0, -0.01]}>
+            <planeGeometry args={[PW + 0.18, PH + 0.18]} />
+            <meshBasicMaterial color={booth.themeColor || '#2563eb'} transparent opacity={0.12} />
+          </mesh>
+
+          {/* Main dark glass background */}
+          <mesh>
+            <planeGeometry args={[PW, PH]} />
+            <meshStandardMaterial color="#080c14" transparent opacity={0.97} roughness={0.02} metalness={0.95} />
+          </mesh>
+
+          {/* ── HEADER BAND (theme color) */}
+          <mesh position={[0, PH / 2 - 0.22, 0.006]}>
+            <planeGeometry args={[PW, 0.44]} />
+            <meshStandardMaterial
+              color={booth.themeColor || '#2563eb'}
+              emissive={booth.themeColor || '#2563eb'}
+              emissiveIntensity={0.45}
+              roughness={0.08} metalness={0.8}
+            />
+          </mesh>
+
+          {/* Booth number badge in header */}
+          <mesh position={[-PW / 2 + 0.34, PH / 2 - 0.22, 0.012]}>
+            <planeGeometry args={[0.5, 0.3]} />
+            <meshBasicMaterial color="#00000066" transparent opacity={0.5} />
+          </mesh>
+          <Text position={[-PW / 2 + 0.34, PH / 2 - 0.22, 0.018]} fontSize={0.13} color="#fff" anchorX="center" anchorY="middle" outlineWidth={0.004} outlineColor="#000">
+            {booth.boothNumber}
+          </Text>
+
+          {/* Company name */}
+          <Text position={[0.12, PH / 2 - 0.22, 0.014]} fontSize={0.17} color="#ffffff" anchorX="center" anchorY="middle" maxWidth={PW - 0.75} outlineWidth={0.005} outlineColor="#000">
+            {booth.companyName}
+          </Text>
+
+          {/* ── CLOSE BUTTON (red X, top-right) */}
+          <mesh ref={closeBtnRef} position={[PW / 2 - 0.24, PH / 2 - 0.22, 0.013]}>
+            <planeGeometry args={[0.34, 0.34]} />
+            <meshStandardMaterial color="#dc2626" emissive="#dc2626" emissiveIntensity={0.5} roughness={0.1} metalness={0.6} />
+          </mesh>
+          <Text position={[PW / 2 - 0.24, PH / 2 - 0.22, 0.02]} fontSize={0.18} color="white" anchorX="center" anchorY="middle">X</Text>
+
+          {/* ── DIVIDER */}
+          <mesh position={[0, PH / 2 - 0.46, 0.007]}>
+            <planeGeometry args={[PW * 0.95, 0.008]} />
+            <meshBasicMaterial color={booth.themeColor || '#2563eb'} />
+          </mesh>
+
+          {/* Category pill */}
+          <Text position={[0, PH / 2 - 0.6, 0.008]} fontSize={0.09} color={booth.themeColor || '#60a5fa'} anchorX="center" anchorY="middle" outlineWidth={0.003} outlineColor="#000">
+            {`[ ${booth.category} ]`}
+          </Text>
+
+          {/* Description */}
+          <Text
+            position={[0, 0.04, 0.008]}
+            fontSize={0.095}
+            color="#c8d0e0"
+            anchorX="center"
+            anchorY="middle"
+            maxWidth={PW - 0.28}
+            lineHeight={1.45}
+            textAlign="center"
+            outlineWidth={0.002}
+            outlineColor="#000"
+          >
+            {(booth.description || 'Welcome to our virtual exhibition stand. We are happy to connect with you.').substring(0, 200)}
+          </Text>
+
+          {/* ── WEBSITE BUTTON */}
+          <mesh ref={websiteBtnRef} position={[-0.6, -PH / 2 + 0.3, 0.01]}>
+            <planeGeometry args={[0.92, 0.38]} />
+            <meshStandardMaterial color="#1d4ed8" emissive="#1d4ed8" emissiveIntensity={0.4} roughness={0.05} metalness={0.7} />
+          </mesh>
+          <Text position={[-0.6, -PH / 2 + 0.3, 0.018]} fontSize={0.105} color="white" anchorX="center" anchorY="middle" outlineWidth={0.003} outlineColor="#000">
+            Visit Website
+          </Text>
+
+          {/* ── WHATSAPP BUTTON */}
+          <mesh ref={whatsappBtnRef} position={[0.6, -PH / 2 + 0.3, 0.01]}>
+            <planeGeometry args={[0.92, 0.38]} />
+            <meshStandardMaterial color="#15803d" emissive="#15803d" emissiveIntensity={0.4} roughness={0.05} metalness={0.7} />
+          </mesh>
+          <Text position={[0.6, -PH / 2 + 0.3, 0.018]} fontSize={0.105} color="white" anchorX="center" anchorY="middle" outlineWidth={0.003} outlineColor="#000">
+            WhatsApp Chat
+          </Text>
+
+        </Billboard>
+      )}
     </>
   );
 }
@@ -990,6 +1122,7 @@ export default function ExhibitionCanvas({
   booths,
   activeBoothId,
   onSelectBooth,
+  onCloseBooth,
   visitorPos,
   setVisitorPos
 }: ExhibitionCanvasProps) {
@@ -1120,11 +1253,13 @@ export default function ExhibitionCanvas({
           />
         )}
 
-        {/* Quest 3: right-controller laser ray + trigger booth selection */}
+        {/* Quest 3: right-controller ray + in-world info panel (replaces DOM modal in VR) */}
         {xrActive && (
-          <XRControllerRay
+          <XRInteractionSystem
             booths={booths}
+            selectedBooth={activeBoothId ? (booths.find(b => b.id === activeBoothId) ?? null) : null}
             onSelectBooth={onSelectBooth}
+            onCloseBooth={onCloseBooth}
           />
         )}
 

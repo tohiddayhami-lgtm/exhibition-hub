@@ -313,6 +313,7 @@ export default function App() {
             booths={booths}
             activeBoothId={activeBoothId}
             onSelectBooth={handleSelectBooth}
+            onCloseBooth={() => { setActiveBoothId(null); setSelectedBooth(null); }}
             visitorPos={visitorPos}
             setVisitorPos={setVisitorPos}
           />
