@@ -138,6 +138,16 @@ function normalizeExternalUrl(url: string) {
   return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
 }
 
+function openLinkInNewWindow(url: string) {
+  const normalizedUrl = normalizeExternalUrl(url);
+  if (!normalizedUrl) return;
+
+  const popup = window.open(normalizedUrl, '_blank', 'noopener,noreferrer');
+  if (popup) {
+    popup.opener = null;
+  }
+}
+
 function toYouTubeEmbed(id: string) {
   const origin = encodeURIComponent(window.location.origin);
   return `https://www.youtube.com/embed/${id}?autoplay=1&enablejsapi=1&playsinline=1&rel=0&modestbranding=1&origin=${origin}`;
@@ -439,12 +449,10 @@ function BoothPdfPanel({
   booth,
   side,
   url,
-  onOpenPdf,
 }: {
   booth: Booth;
   side: 'left' | 'right';
   url: string;
-  onOpenPdf: (url: string, title: string) => void;
 }) {
   const [page, setPage] = useState(1);
   const [zoom, setZoom] = useState(100);
@@ -453,72 +461,115 @@ function BoothPdfPanel({
 
   const col = booth.themeColor || '#2563eb';
   const sideSign = side === 'left' ? -1 : 1;
-  const title = `${booth.companyName} - ${side === 'left' ? 'Left PDF' : 'Right PDF'}`;
   const panelW = Math.min(1.25, Math.max(0.95, booth.depth * 0.32));
   const panelH = panelW * 1.414; // A4 portrait ratio
   const panelY = Math.min(booth.height * 0.52, 1.85);
+  const viewerUrl = getPdfViewerUrl(url, page, zoom);
 
-  const openCurrentPage = () => {
-    onOpenPdf(getPdfViewerUrl(url, page, zoom), title);
-  };
-
-  const updatePage = (nextPage: number) => {
-    const safePage = Math.max(1, nextPage);
-    setPage(safePage);
-    onOpenPdf(getPdfViewerUrl(url, safePage, zoom), title);
-  };
-
-  const updateZoom = (nextZoom: number) => {
-    const safeZoom = Math.max(60, Math.min(220, nextZoom));
-    setZoom(safeZoom);
-    onOpenPdf(getPdfViewerUrl(url, page, safeZoom), title);
-  };
+  const updatePage = (nextPage: number) => setPage(Math.max(1, nextPage));
+  const updateZoom = (nextZoom: number) => setZoom(Math.max(60, Math.min(220, nextZoom)));
 
   return (
     <group
       position={[sideSign * (booth.width / 2 - 0.035), panelY, 0]}
       rotation={[0, side === 'left' ? Math.PI / 2 : -Math.PI / 2, 0]}
     >
-      <mesh onClick={(e) => { e.stopPropagation(); openCurrentPage(); }}>
+      <mesh onClick={(e) => e.stopPropagation()}>
         <boxGeometry args={[panelW + 0.1, panelH + 0.42, 0.06]} />
         <meshStandardMaterial color="#0a0f1a" roughness={0.08} metalness={0.85} emissive={col} emissiveIntensity={0.08} />
       </mesh>
-      <mesh position={[0, 0.12, 0.04]} onClick={(e) => { e.stopPropagation(); openCurrentPage(); }}>
+      <mesh position={[0, 0.12, 0.04]} onClick={(e) => e.stopPropagation()}>
         <planeGeometry args={[panelW, panelH]} />
         <meshStandardMaterial color="#f8fafc" roughness={0.35} metalness={0.02} />
       </mesh>
-      <Text
-        position={[0, panelH * 0.32, 0.055]}
-        fontSize={0.11}
-        color="#111827"
-        anchorX="center"
-        anchorY="middle"
-        maxWidth={panelW * 0.82}
+
+      <Html
+        transform
+        position={[0, 0.12, 0.075]}
+        distanceFactor={1.45}
+        occlude={false}
+        style={{ pointerEvents: 'auto' }}
       >
-        PDF
-      </Text>
-      <Text
-        position={[0, 0.1, 0.055]}
-        fontSize={0.065}
-        color="#475569"
-        anchorX="center"
-        anchorY="middle"
-        maxWidth={panelW * 0.82}
-        textAlign="center"
-      >
-        {`${side === 'left' ? 'Left' : 'Right'} Catalog\nPage ${page} | Zoom ${zoom}%`}
-      </Text>
-      <Text
-        position={[0, -panelH * 0.32, 0.055]}
-        fontSize={0.052}
-        color="#64748b"
-        anchorX="center"
-        anchorY="middle"
-        maxWidth={panelW * 0.8}
-        textAlign="center"
-      >
-        Tap to open in hall viewer
-      </Text>
+        <div
+          onClick={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
+          style={{
+            width: 280,
+            height: 436,
+            background: '#0a0f1a',
+            border: `3px solid ${col}`,
+            borderRadius: 12,
+            overflow: 'hidden',
+            boxShadow: '0 14px 50px rgba(0,0,0,0.45)',
+            fontFamily: 'system-ui, sans-serif',
+          }}
+        >
+          <div
+            style={{
+              height: 34,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '0 10px',
+              background: '#111827',
+              color: '#e5e7eb',
+              fontSize: 10,
+              fontWeight: 800,
+            }}
+          >
+            <span>{side === 'left' ? 'LEFT PDF' : 'RIGHT PDF'}</span>
+            <span>{`P${page} ${zoom}%`}</span>
+          </div>
+          <iframe
+            src={viewerUrl}
+            title={`${booth.companyName} ${side} PDF`}
+            style={{
+              width: '100%',
+              height: 350,
+              border: 'none',
+              background: '#fff',
+              display: 'block',
+            }}
+          />
+          <div
+            style={{
+              height: 52,
+              display: 'grid',
+              gridTemplateColumns: 'repeat(4, 1fr)',
+              gap: 6,
+              padding: 6,
+              background: '#0f172a',
+            }}
+          >
+            {[
+              { label: 'Prev', action: () => updatePage(page - 1) },
+              { label: 'Next', action: () => updatePage(page + 1) },
+              { label: 'Zoom -', action: () => updateZoom(zoom - 20) },
+              { label: 'Zoom +', action: () => updateZoom(zoom + 20) },
+            ].map((item) => (
+              <button
+                key={item.label}
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  item.action();
+                }}
+                style={{
+                  border: '1px solid #334155',
+                  borderRadius: 8,
+                  background: '#1f2937',
+                  color: '#e5e7eb',
+                  fontSize: 10,
+                  fontWeight: 800,
+                  cursor: 'pointer',
+                }}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </Html>
 
       <PdfPanelButton label="Prev" x={-0.48} y={-(panelH / 2 + 0.12)} onClick={() => updatePage(page - 1)} />
       <PdfPanelButton label="Next" x={-0.16} y={-(panelH / 2 + 0.12)} onClick={() => updatePage(page + 1)} />
@@ -590,16 +641,12 @@ function BoothStructure({
   booth,
   active,
   onSelect,
-  onOpenLink,
-  onOpenPdf,
   isYoutubePlaying,
   onToggleYoutubeVideo,
 }: {
   booth: Booth;
   active: boolean;
   onSelect: () => void;
-  onOpenLink: (url: string, title: string) => void;
-  onOpenPdf: (url: string, title: string) => void;
   isYoutubePlaying: boolean;
   onToggleYoutubeVideo: (booth: Booth) => void;
 }) {
@@ -741,7 +788,7 @@ function BoothStructure({
           onClick={(e) => {
             e.stopPropagation();
             if (booth.websiteUrl) {
-              onOpenLink(normalizeExternalUrl(booth.websiteUrl), booth.companyName);
+              openLinkInNewWindow(booth.websiteUrl);
             }
           }}
           onPointerOver={(e) => {
@@ -786,13 +833,11 @@ function BoothStructure({
         booth={booth}
         side="left"
         url={getBoothPdfUrl(booth, 'left')}
-        onOpenPdf={onOpenPdf}
       />
       <BoothPdfPanel
         booth={booth}
         side="right"
         url={getBoothPdfUrl(booth, 'right')}
-        onOpenPdf={onOpenPdf}
       />
 
       {/* 8. FLOATING BILLBOARD — always faces visitor, large & clickable, visible in VR */}
@@ -1014,12 +1059,14 @@ function XRInteractionSystem({
   onCloseBooth,
   onOpenOverlay,
   onToggleYoutubeVideo,
+  activeYoutubeBoothId,
 }: {
   booths: Booth[];
   selectedBooth: Booth | null;
   onCloseBooth: () => void;
   onOpenOverlay: (url: string, title: string) => void;
   onToggleYoutubeVideo: (booth: Booth) => void;
+  activeYoutubeBoothId: string | null;
 }) {
   const { gl } = useThree();
 
@@ -1074,8 +1121,8 @@ function XRInteractionSystem({
           booth,
           kind: 'youtube',
           box: new THREE.Box3(
-            new THREE.Vector3(lcdCenter.x - screenW / 2, lcdCenter.y - screenH / 2, lcdCenter.z - 0.12),
-            new THREE.Vector3(lcdCenter.x + screenW / 2, lcdCenter.y + screenH / 2, lcdCenter.z + 0.12)
+            new THREE.Vector3(lcdCenter.x - screenW * 0.28, lcdCenter.y - screenH * 0.28, lcdCenter.z - 0.06),
+            new THREE.Vector3(lcdCenter.x + screenW * 0.28, lcdCenter.y + screenH * 0.28, lcdCenter.z + 0.06)
           ),
         });
       }
@@ -1160,13 +1207,15 @@ function XRInteractionSystem({
 
     // ── Always test INFO/link and LCD/video zones in the physical booth.
     for (const { booth, kind, box } of boothHitZones) {
+      if (kind === 'youtube' && activeYoutubeBoothId) continue;
+
       if (ray.intersectBox(box, aabbTarget)) {
         const dist = cPos.distanceTo(aabbTarget);
         if (dist < closestDist) {
           closestDist = dist;
           closestPoint = aabbTarget.clone();
           if (kind === 'info') {
-            hitActionRef.current = () => onOpenOverlay(normalizeExternalUrl(booth.websiteUrl), booth.companyName);
+            hitActionRef.current = () => openLinkInNewWindow(booth.websiteUrl);
           } else if (kind === 'youtube') {
             hitActionRef.current = () => onToggleYoutubeVideo(booth);
           } else {
@@ -2059,8 +2108,6 @@ export default function ExhibitionCanvas({
               booth={booth}
               active={activeBoothId === booth.id}
               onSelect={() => onSelectBooth(booth)}
-              onOpenLink={handleOpenOverlay}
-              onOpenPdf={handleOpenOverlay}
               isYoutubePlaying={activeYoutubeBoothId === booth.id}
               onToggleYoutubeVideo={handleToggleYoutubeVideo}
             />
@@ -2108,6 +2155,7 @@ export default function ExhibitionCanvas({
             onCloseBooth={onCloseBooth}
             onOpenOverlay={handleOpenOverlay}
             onToggleYoutubeVideo={handleToggleYoutubeVideo}
+            activeYoutubeBoothId={activeYoutubeBoothId}
           />
         )}
 
