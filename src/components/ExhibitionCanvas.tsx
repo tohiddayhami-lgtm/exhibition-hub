@@ -55,19 +55,10 @@ interface ExhibitionCanvasProps {
 }
 
 // Professional exhibition floor with marble tiles and decorative borders
-function GroundPlane({ hall, onFloorClick, teleportTarget }: {
+function GroundPlane({ hall, onFloorClick }: {
   hall: Hall;
   onFloorClick: (point: THREE.Vector3) => void;
-  teleportTarget: [number, number, number] | null;
 }) {
-  const ringRef = useRef<THREE.Mesh>(null);
-
-  useFrame((state) => {
-    if (ringRef.current) {
-      ringRef.current.scale.setScalar(1 + Math.sin(state.clock.getElapsedTime() * 6) * 0.15);
-    }
-  });
-
   return (
     <group>
       {/* Outer floor (dark surround outside hall) */}
@@ -122,18 +113,6 @@ function GroundPlane({ hall, onFloorClick, teleportTarget }: {
         <planeGeometry args={[hall.width, hall.depth]} />
         <meshBasicMaterial color="#b09a5a" wireframe />
       </mesh>
-
-      {/* Interactive teleport indicator portal ring */}
-      {teleportTarget && (
-        <mesh
-          ref={ringRef}
-          rotation={[-Math.PI / 2, 0, 0]}
-          position={[teleportTarget[0], 0.015, teleportTarget[2]]}
-        >
-          <ringGeometry args={[0.4, 0.5, 32]} />
-          <meshBasicMaterial color="#38bdf8" side={THREE.DoubleSide} transparent opacity={0.9} />
-        </mesh>
-      )}
     </group>
   );
 }
@@ -1085,10 +1064,8 @@ const MemoBoothStructure = React.memo(BoothStructure, (prev, next) =>
 );
 
 // Frame core to handle smoothly interpolating camera and controls states
-function SceneCameraController({ visitorPos, teleportTarget, setTeleportTarget, povEnabled }: {
+function SceneCameraController({ visitorPos, povEnabled }: {
   visitorPos: [number, number, number];
-  teleportTarget: [number, number, number] | null;
-  setTeleportTarget: (pos: [number, number, number] | null) => void;
   povEnabled: boolean;
 }) {
   const { camera, gl } = useThree();
@@ -1106,25 +1083,7 @@ function SceneCameraController({ visitorPos, teleportTarget, setTeleportTarget, 
 
     if (povEnabled) {
       camera.position.set(visitorPos[0], HUMAN_EYE_HEIGHT, visitorPos[2]);
-      if (teleportTarget) setTeleportTarget(null);
       return;
-    }
-
-    // Smooth camera teleporting slide
-    if (teleportTarget) {
-      const dx = teleportTarget[0] - camera.position.x;
-      const dz = teleportTarget[2] + 8 - camera.position.z; // spacing offset
-      const dy = 5.0 - camera.position.y; // visual height spacing
-
-      const dist = Math.sqrt(dx * dx + dz * dz);
-      if (dist > 0.1) {
-        camera.position.x += dx * 0.12;
-        camera.position.z += dz * 0.12;
-        camera.position.y += dy * 0.12;
-      } else {
-        camera.position.set(teleportTarget[0], 5.0, teleportTarget[2] + 8);
-        setTeleportTarget(null);
-      }
     }
   });
 
@@ -1712,10 +1671,7 @@ function KeyboardMovementController({
 
     latestVisitorPos.current = nextPos;
     setVisitorPos(nextPos);
-
-    if (!povEnabled) {
-      setTeleportTarget([nextX, 0, nextZ]);
-    }
+    setTeleportTarget(null);
   });
 
   return null;
@@ -2368,11 +2324,7 @@ export default function ExhibitionCanvas({
     const targetX = Math.max(-hall.width / 2 + margin, Math.min(hall.width / 2 - margin, point.x));
     const targetZ = Math.max(-hall.depth / 2 + margin, Math.min(hall.depth / 2 - margin, point.z));
     
-    if (povEnabled) {
-      setTeleportTarget(null);
-    } else {
-      setTeleportTarget([targetX, 0, targetZ]);
-    }
+    setTeleportTarget(null);
     setVisitorPos([targetX, VISITOR_BODY_HEIGHT, targetZ]);
   };
 
@@ -2383,10 +2335,10 @@ export default function ExhibitionCanvas({
       if (activeBooth) {
         const target: [number, number, number] = [activeBooth.posX, 0, activeBooth.posZ + 3.4];
         setVisitorPos([target[0], VISITOR_BODY_HEIGHT, target[2]]);
-        setTeleportTarget(povEnabled ? null : target);
+        setTeleportTarget(null);
       }
     }
-  }, [activeBoothId, booths, povEnabled, setVisitorPos]);
+  }, [activeBoothId, booths, setVisitorPos]);
 
   return (
     <div id="exhibition-render-container" className="w-full h-full relative bg-neutral-950">
@@ -2445,7 +2397,7 @@ export default function ExhibitionCanvas({
 
         {/* 3D Exhibition Structure Geometries */}
         <Suspense fallback={null}>
-          <GroundPlane hall={hall} onFloorClick={handleFloorClick} teleportTarget={teleportTarget} />
+          <GroundPlane hall={hall} onFloorClick={handleFloorClick} />
           <IndustrialCeiling hall={hall} />
           <ExhibitionWall hall={hall} />
 
@@ -2468,8 +2420,6 @@ export default function ExhibitionCanvas({
 
         <SceneCameraController 
           visitorPos={visitorPos} 
-          teleportTarget={teleportTarget} 
-          setTeleportTarget={setTeleportTarget} 
           povEnabled={povEnabled}
         />
 
