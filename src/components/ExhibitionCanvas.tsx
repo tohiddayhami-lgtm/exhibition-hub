@@ -193,6 +193,30 @@ function getGoogleDriveFileId(url: string) {
   return null;
 }
 
+async function fetchPdfBytes(candidateUrl: string) {
+  const response = await fetch(candidateUrl, {
+    mode: 'cors',
+    credentials: 'omit',
+    headers: {
+      accept: 'application/pdf,*/*',
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+
+  const contentType = response.headers.get('content-type') || '';
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  const header = new TextDecoder('ascii').decode(bytes.slice(0, 5));
+
+  if (!header.startsWith('%PDF')) {
+    throw new Error(contentType.includes('html') ? 'Link opens an HTML page, not a PDF file' : 'Response is not a PDF file');
+  }
+
+  return bytes;
+}
+
 function getSpatialPdfUrlCandidates(url: string) {
   const normalizedUrl = normalizeExternalUrl(url);
   if (!normalizedUrl) return [];
@@ -204,6 +228,7 @@ function getSpatialPdfUrlCandidates(url: string) {
   if (googleDriveId) {
     rawCandidates.add(`https://drive.google.com/uc?export=download&id=${googleDriveId}`);
     rawCandidates.add(`https://drive.google.com/uc?id=${googleDriveId}&export=download`);
+    rawCandidates.add(`https://drive.usercontent.google.com/download?id=${googleDriveId}&export=download&confirm=t`);
   }
 
   if (normalizedUrl.includes('dropbox.com')) {
@@ -218,6 +243,9 @@ function getSpatialPdfUrlCandidates(url: string) {
   const candidates = new Set<string>();
   Array.from(rawCandidates).forEach((candidate) => {
     candidates.add(candidate);
+    candidates.add(`https://api.allorigins.win/raw?url=${encodeURIComponent(candidate)}`);
+    candidates.add(`https://corsproxy.io/?${encodeURIComponent(candidate)}`);
+    candidates.add(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(candidate)}`);
     candidates.add(`/api/pdf-proxy?url=${encodeURIComponent(candidate)}`);
   });
 
@@ -595,13 +623,8 @@ function BoothPdfPanel({
       try {
         for (const candidateUrl of candidates) {
           try {
-            const loadingTask = pdfjsLib.getDocument({
-              url: candidateUrl,
-              withCredentials: false,
-              disableRange: true,
-              disableStream: true,
-              disableAutoFetch: true,
-            });
+            const pdfBytes = await fetchPdfBytes(candidateUrl);
+            const loadingTask = pdfjsLib.getDocument({ data: pdfBytes });
             const pdf = await loadingTask.promise;
             if (cancelled) return;
 
