@@ -1,0 +1,8 @@
+{
+  "name": "Virtual Exhibition Platform",
+  "description": "Interactive 3D web-based virtual exhibition hall platform with customizable sizes, customizable stand positions, business contact portals, product catalogs, and 3D showroom widgets.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

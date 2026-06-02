@@ -1,0 +1,77 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Exhibition Hall rules
+    match /halls/{hallId} {
+      allow read: if true;
+      allow create: if isSignedIn() 
+        && isValidId(hallId)
+        && incoming().id == hallId
+        && incoming().width is number && incoming().width > 0
+        && incoming().depth is number && incoming().depth > 0
+        && incoming().height is number && incoming().height > 0
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isSignedIn()
+        && incoming().width is number && incoming().width > 0
+        && incoming().depth is number && incoming().depth > 0
+        && incoming().height is number && incoming().height > 0
+        && incoming().updatedAt == request.time
+        && incoming().createdAt == existing().createdAt;
+
+      allow delete: if isSignedIn();
+    }
+
+    // Booth rules nested under halls
+    match /halls/{hallId}/booths/{boothId} {
+      allow read: if true;
+      allow create: if isSignedIn()
+        && isValidId(hallId)
+        && isValidId(boothId)
+        && incoming().id == boothId
+        && incoming().hallId == hallId
+        && incoming().width is number && incoming().width > 0
+        && incoming().depth is number && incoming().depth > 0
+        && incoming().height is number && incoming().height > 0
+        && incoming().posX is number
+        && incoming().posZ is number
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isSignedIn()
+        && incoming().width is number && incoming().width > 0
+        && incoming().depth is number && incoming().depth > 0
+        && incoming().height is number && incoming().height > 0
+        && incoming().posX is number
+        && incoming().posZ is number
+        && incoming().updatedAt == request.time
+        && incoming().createdAt == existing().createdAt;
+
+      allow delete: if isSignedIn();
+    }
+  }
+}

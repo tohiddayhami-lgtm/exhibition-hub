@@ -1,0 +1,131 @@
+{
+  "entities": {
+    "ExhibitionHall": {
+      "title": "ExhibitionHall",
+      "description": "Representation of a custom-sized exhibition hall structure.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier of the hall"
+        },
+        "name": {
+          "type": "string",
+          "description": "Decorative name of the hall"
+        },
+        "width": {
+          "type": "number",
+          "description": "Width of the hall in meters"
+        },
+        "depth": {
+          "type": "number",
+          "description": "Depth of the hall in meters"
+        },
+        "height": {
+          "type": "number",
+          "description": "Ceiling height of the hall in meters"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp of creation"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp of last edit"
+        }
+      },
+      "required": ["id", "name", "width", "depth", "height", "createdAt", "updatedAt"]
+    },
+    "Booth": {
+      "title": "Booth",
+      "description": "Exhibitor booth configuration placed within a specific hall.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "hallId": {
+          "type": "string"
+        },
+        "boothNumber": {
+          "type": "string"
+        },
+        "companyName": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string"
+        },
+        "width": {
+          "type": "number"
+        },
+        "depth": {
+          "type": "number"
+        },
+        "height": {
+          "type": "number"
+        },
+        "posX": {
+          "type": "number"
+        },
+        "posZ": {
+          "type": "number"
+        },
+        "themeColor": {
+          "type": "string"
+        },
+        "logoUrl": {
+          "type": "string"
+        },
+        "bannerUrl": {
+          "type": "string"
+        },
+        "productImageUrl": {
+          "type": "string"
+        },
+        "websiteUrl": {
+          "type": "string"
+        },
+        "whatsapp": {
+          "type": "string"
+        },
+        "videoUrl": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "stylePreset": {
+          "type": "string"
+        },
+        "modelUrl": {
+          "type": "string"
+        },
+        "modelScale": {
+          "type": "number"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["id", "hallId", "boothNumber", "companyName", "width", "depth", "height", "posX", "posZ", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/halls/{hallId}": {
+      "schema": "ExhibitionHall",
+      "description": "Collection of custom exhibition halls"
+    },
+    "/halls/{hallId}/booths/{boothId}": {
+      "schema": "Booth",
+      "description": "Nested collection of booths assigned to a specific hall"
+    }
+  }
+}
