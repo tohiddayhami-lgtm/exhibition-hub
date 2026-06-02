@@ -1284,8 +1284,10 @@ export default function ExhibitionCanvas({
             <OrbitControls
               enableDamping
               dampingFactor={0.08}
-              minDistance={3}
-              maxDistance={28}
+              enableZoom
+              zoomSpeed={1.2}
+              minDistance={2}
+              maxDistance={40}
               maxPolarAngle={Math.PI / 2.1}
               target={[visitorPos[0], 1.2, visitorPos[2]]}
             />
