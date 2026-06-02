@@ -30,6 +30,7 @@ import { doc, setDoc, collection, onSnapshot } from 'firebase/firestore';
 // Lightweight components — loaded immediately
 import HallSelection from './components/HallSelection';
 import VisitorControls from './components/VisitorControls';
+import BuilderLoginModal from './components/BuilderLoginModal';
 
 // Heavy 3D components — lazy loaded only when user enters a hall
 // This keeps the landing page bundle tiny (no Three.js on initial load)
@@ -53,6 +54,7 @@ export default function App() {
   const [appView, setAppView] = useState<'selecting' | 'inside-hall'>('selecting');
   const [halls, setHalls] = useState<Hall[]>([]);
   const [selectedHallId, setSelectedHallId] = useState<string | null>(null);
+  const [showBuilderLogin, setShowBuilderLogin] = useState(false);
 
   const [activeView, setActiveView] = useState<'visitor' | 'admin'>('visitor');
   const [hall, setHall] = useState<Hall>(DEFAULT_HALL);
@@ -279,12 +281,12 @@ export default function App() {
             ) : (
               <button
                 id="admin-sign-in-btn"
-                onClick={handleSignIn}
-                className="flex items-center gap-1.5 bg-white border border-[#E0E4E8] hover:bg-neutral-50 text-neutral-600 hover:text-[#1A1D21] px-2.5 py-1.5 text-xs font-mono font-medium rounded-md transition-all cursor-pointer"
-                title="Authenticate as Admin"
+                onClick={() => setShowBuilderLogin(true)}
+                className="flex items-center gap-1.5 bg-[#1A1D21] hover:bg-[#2C3036] text-white px-2.5 py-1.5 text-xs font-mono font-medium rounded-md transition-all cursor-pointer border border-[#1A1D21]"
+                title="ورود به Builder Mode"
               >
-                <LogIn className="w-3.5 h-3.5 text-[#1A1D21]" />
-                <span>Sign In</span>
+                <LogIn className="w-3.5 h-3.5" />
+                <span>Builder Login</span>
               </button>
             )}
           </div>
@@ -308,20 +310,22 @@ export default function App() {
           <button
             id="view-admin-toggle"
             onClick={() => {
-              setActiveView('admin');
-              // Auto mock if database permissions need local testing
-              if (!user && !isAuthLoading) {
-                console.info("Developer Tip: Authenticate to save changes permanently to Firebase, or edit freely to visualize changes!");
+              if (!user) {
+                // Not logged in → show login modal first
+                setShowBuilderLogin(true);
+              } else {
+                setActiveView('admin');
               }
             }}
             className={`flex-1 py-2 px-3 rounded-md text-xs font-bold flex items-center justify-center gap-2 transition-all border cursor-pointer uppercase tracking-wider ${
-              activeView === 'admin'
+              activeView === 'admin' && user
                 ? 'bg-[#1A1D21] text-white border-[#1A1D21] shadow'
                 : 'bg-white text-neutral-500 border-[#E0E4E8] hover:text-[#1A1D21]'
             }`}
           >
             <Settings className="w-4 h-4" />
             <span>Builder Panel</span>
+            {!user && <LogIn className="w-3 h-3 opacity-50" />}
           </button>
         </div>
 
@@ -423,6 +427,16 @@ export default function App() {
           />
         </Suspense>
       </main>
+
+      {/* Builder Mode Login Modal */}
+      <BuilderLoginModal
+        isOpen={showBuilderLogin}
+        onClose={() => setShowBuilderLogin(false)}
+        onSuccess={() => {
+          setShowBuilderLogin(false);
+          setActiveView('admin');
+        }}
+      />
     </div>
   );
 }
