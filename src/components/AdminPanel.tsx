@@ -4,6 +4,7 @@ import { Hall, Booth } from '../types';
 import { db, handleFirestoreError, OperationType } from '../lib/firebase';
 import { doc, setDoc, deleteDoc } from 'firebase/firestore';
 import { computeAutoLayout } from '../utils/autoLayout';
+import QuickSetupWizard from './QuickSetupWizard';
 
 interface AdminPanelProps {
   hall: Hall;
@@ -24,6 +25,7 @@ export default function AdminPanel({
 }: AdminPanelProps) {
   const [activeTab, setActiveTab] = useState<'hall' | 'booth-list' | 'booth-form'>('booth-list');
   const [selectedBoothId, setSelectedBoothId] = useState<string | null>(null);
+  const [showWizard, setShowWizard] = useState(false);
 
   // Hall Form State
   const [hallName, setHallName] = useState(hall.name);
@@ -368,6 +370,26 @@ export default function AdminPanel({
         )}        {/* B. BOOTHS DIRECTORIES */}
         {activeTab === 'booth-list' && (
           <div className="space-y-4">
+
+            {/* ── Quick Setup banner ─────────────────────────────────────── */}
+            <button
+              onClick={() => setShowWizard(true)}
+              className="w-full flex items-center gap-3 p-3.5 rounded-xl bg-[#1A1D21] hover:bg-[#2C3036] text-white transition-all cursor-pointer group"
+            >
+              <div className="p-2 rounded-lg bg-white/10">
+                <Sparkles className="w-4 h-4 text-cyan-300" />
+              </div>
+              <div className="text-left flex-1 min-w-0">
+                <p className="text-xs font-bold tracking-wide">Quick Hall Setup</p>
+                <p className="text-[10px] text-white/50 font-mono">
+                  {booths.length > 0
+                    ? `${booths.length} غرفه موجود — بازسازی با wizard`
+                    : 'تعداد غرفه را بزن، بقیه خودکار می‌شه'}
+                </p>
+              </div>
+              <Plus className="w-4 h-4 text-white/40 group-hover:text-white/80 transition-colors shrink-0" />
+            </button>
+
             <div className="flex items-center justify-between">
               <span className="text-xs font-mono font-bold text-neutral-500 uppercase tracking-wider">
                 Manage Space Zones
@@ -726,6 +748,16 @@ export default function AdminPanel({
           </div>
         )}
       </div>
+
+      {/* Quick Setup Wizard — modal overlay */}
+      {showWizard && (
+        <QuickSetupWizard
+          hall={hall}
+          onUpdateHall={(newHall) => { onUpdateHall(newHall); setHallName(newHall.name); }}
+          onUpdateBooths={onUpdateBooths}
+          onClose={() => setShowWizard(false)}
+        />
+      )}
     </div>
   );
 }
