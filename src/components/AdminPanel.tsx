@@ -54,6 +54,7 @@ export default function AdminPanel({
   const [bWhatsapp, setBWhatsapp] = useState('');
   const [bVideo, setBVideo] = useState('');
   const [bCatalog, setBCatalog] = useState('');
+  const [bPdfRight, setBPdfRight] = useState('');
   const [bPreset, setBPreset] = useState<'classic' | 'modern' | 'minimalist' | 'futuristic'>('modern');
   const [customModelFilename, setCustomModelFilename] = useState('');
   const [customModelUrl, setCustomModelUrl] = useState('');
@@ -116,6 +117,7 @@ export default function AdminPanel({
     setBWhatsapp('');
     setBVideo('');
     setBCatalog('');
+    setBPdfRight('');
     setBPreset('modern');
     setCustomModelFilename('');
     setCustomModelUrl('');
@@ -143,6 +145,7 @@ export default function AdminPanel({
     setBWhatsapp(booth.whatsapp || '');
     setBVideo(booth.videoUrl || '');
     setBCatalog(booth.catalogUrl || '');
+    setBPdfRight(booth.pdfRightUrl || '');
     setBPreset(booth.stylePreset);
     setCustomModelUrl(booth.modelUrl || '');
     setCustomModelFilename(booth.modelUrl ? 'custom_model.glb' : '');
@@ -231,6 +234,7 @@ export default function AdminPanel({
       modelScale:  1.0,
       // Optional fields: omit entirely when empty — Firestore rejects `undefined`
       ...(bCatalog.trim()  ? { catalogUrl: bCatalog.trim() }    : {}),
+      ...(bPdfRight.trim() ? { pdfRightUrl: bPdfRight.trim() }   : {}),
       ...(customModelUrl   ? { modelUrl:   customModelUrl }     : {}),
       createdAt:   new Date().toISOString(),
       updatedAt:   new Date().toISOString(),
@@ -753,13 +757,25 @@ export default function AdminPanel({
                   </div>
                   <div>
                     <label className="block text-[10px] font-mono text-neutral-450 uppercase mb-1 font-bold">
-                      Catalog URL <span className="text-neutral-400 normal-case">(PDF یا لینک — نمایش در VR Browser)</span>
+                      Left PDF URL <span className="text-neutral-400 normal-case">(پنل PDF سمت چپ غرفه)</span>
                     </label>
                     <input
                       type="url"
                       value={bCatalog}
                       onChange={(e) => setBCatalog(e.target.value)}
-                      placeholder="https://example.com/catalog.pdf"
+                      placeholder="https://example.com/left-catalog.pdf"
+                      className="w-full bg-white border border-[#E0E4E8] rounded p-2 text-[#1A1D21] focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-mono text-neutral-450 uppercase mb-1 font-bold">
+                      Right PDF URL <span className="text-neutral-400 normal-case">(پنل PDF سمت راست غرفه)</span>
+                    </label>
+                    <input
+                      type="url"
+                      value={bPdfRight}
+                      onChange={(e) => setBPdfRight(e.target.value)}
+                      placeholder="https://example.com/right-catalog.pdf"
                       className="w-full bg-white border border-[#E0E4E8] rounded p-2 text-[#1A1D21] focus:outline-none"
                     />
                   </div>

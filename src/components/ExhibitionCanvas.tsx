@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useState, Suspense, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { OrbitControls, Html, useGLTF, PointerLockControls, Text, Billboard } from '@react-three/drei';
+import { OrbitControls, Html, PointerLockControls, Text, Billboard } from '@react-three/drei';
 import * as THREE from 'three';
 import { Hall, Booth } from '../types';
 import { Eye, Glasses } from 'lucide-react';
@@ -39,76 +39,6 @@ interface ExhibitionCanvasProps {
   onCloseBooth: () => void;
   visitorPos: [number, number, number];
   setVisitorPos: (pos: [number, number, number]) => void;
-}
-
-// Safely attempts to load a custom GLB/GLTF model. If it fails or is loading, shows a sleek placeholder.
-function GLTFModelLoader({ url, scale = 1 }: { url: string; scale?: number }) {
-  try {
-    const { scene } = useGLTF(url);
-    // Auto center and scale model
-    return (
-      <primitive 
-        object={scene.clone()} 
-        scale={[scale, scale, scale]} 
-        position={[0, 0.4, 0]}
-      />
-    );
-  } catch (error) {
-    console.error("Failed loading model", error);
-    return <PlaceholderProductStyle themeColor="#777" />;
-  }
-}
-
-// Fallback visual showpieces to enrich empty booths style-by-style
-function PlaceholderProductStyle({ themeColor, style }: { themeColor?: string, style?: string }) {
-  const meshRef = useRef<THREE.Mesh>(null);
-  
-  useFrame((state) => {
-    if (meshRef.current) {
-      meshRef.current.rotation.y = state.clock.getElapsedTime() * 0.7;
-    }
-  });
-
-  if (style === 'futuristic') {
-    return (
-      <group position={[0, 0.8, 0]}>
-        <mesh ref={meshRef}>
-          <octahedronGeometry args={[0.4, 1]} />
-          <meshStandardMaterial color={themeColor || "#fff"} roughness={0.1} metalness={0.9} emissive={themeColor || "#fff"} emissiveIntensity={0.2} />
-        </mesh>
-        <mesh position={[0, -0.6, 0]}>
-          <cylinderGeometry args={[0.5, 0.6, 0.2, 16]} />
-          <meshStandardMaterial color="#1a1a1a" roughness={0.3} />
-        </mesh>
-      </group>
-    );
-  } else if (style === 'modern') {
-    return (
-      <group position={[0, 0.8, 0]}>
-        <mesh ref={meshRef}>
-          <boxGeometry args={[0.6, 0.6, 0.6]} />
-          <meshStandardMaterial color={themeColor || "#fff"} roughness={0.2} metalness={0.6} />
-        </mesh>
-        <mesh position={[0, -0.6, 0]}>
-          <cylinderGeometry args={[0.5, 0.6, 0.2, 16]} />
-          <meshStandardMaterial color="#1a1a1a" roughness={0.3} />
-        </mesh>
-      </group>
-    );
-  } else {
-    return (
-      <group position={[0, 0.8, 0]}>
-        <mesh ref={meshRef}>
-          <torusGeometry args={[0.35, 0.12, 16, 64]} />
-          <meshStandardMaterial color={themeColor || "#fff"} roughness={0.15} metalness={0.8} />
-        </mesh>
-        <mesh position={[0, -0.6, 0]}>
-          <cylinderGeometry args={[0.5, 0.6, 0.2, 16]} />
-          <meshStandardMaterial color="#2c2c2c" roughness={0.4} />
-        </mesh>
-      </group>
-    );
-  }
 }
 
 // Professional exhibition floor with marble tiles and decorative borders
@@ -208,23 +138,19 @@ function normalizeExternalUrl(url: string) {
   return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
 }
 
-function openExternalLink(url: string, sameTab = false) {
-  const normalizedUrl = normalizeExternalUrl(url);
-  if (!normalizedUrl) return;
-
-  if (sameTab) {
-    window.location.assign(normalizedUrl);
-    return;
-  }
-
-  const popup = window.open(normalizedUrl, '_blank', 'noopener,noreferrer');
-  if (!popup) {
-    window.location.assign(normalizedUrl);
-  }
+function toYouTubeEmbed(id: string) {
+  const origin = encodeURIComponent(window.location.origin);
+  return `https://www.youtube.com/embed/${id}?autoplay=1&enablejsapi=1&playsinline=1&rel=0&modestbranding=1&origin=${origin}`;
 }
 
-function toYouTubeEmbed(id: string) {
-  return `https://www.youtube.com/embed/${id}?autoplay=1&playsinline=1&rel=0&modestbranding=1`;
+function getBoothPdfUrl(booth: Booth, side: 'left' | 'right') {
+  return side === 'left' ? booth.catalogUrl || '' : booth.pdfRightUrl || '';
+}
+
+function getPdfViewerUrl(url: string, page: number, zoom: number) {
+  const normalizedUrl = normalizeExternalUrl(url);
+  if (!normalizedUrl) return '';
+  return `${normalizedUrl}#page=${page}&zoom=${zoom}`;
 }
 
 // ── Control button helper (3D clickable button, works in VR) ─────────────────
@@ -473,6 +399,135 @@ function VideoLCDScreen({
   return <DirectVideoLCDScreen booth={booth} />;
 }
 
+function PdfPanelButton({
+  label,
+  x,
+  y,
+  onClick,
+}: {
+  label: string;
+  x: number;
+  y: number;
+  onClick: () => void;
+}) {
+  const [hovered, setHovered] = useState(false);
+
+  return (
+    <group position={[x, y, 0.035]}>
+      <mesh
+        onClick={(e) => {
+          e.stopPropagation();
+          onClick();
+        }}
+        onPointerOver={(e) => {
+          e.stopPropagation();
+          setHovered(true);
+        }}
+        onPointerOut={() => setHovered(false)}
+      >
+        <planeGeometry args={[0.32, 0.18]} />
+        <meshStandardMaterial color={hovered ? '#facc15' : '#111827'} roughness={0.12} metalness={0.55} />
+      </mesh>
+      <Text position={[0, 0, 0.01]} fontSize={0.07} color={hovered ? '#111827' : '#e5e7eb'} anchorX="center" anchorY="middle">
+        {label}
+      </Text>
+    </group>
+  );
+}
+
+function BoothPdfPanel({
+  booth,
+  side,
+  url,
+  onOpenPdf,
+}: {
+  booth: Booth;
+  side: 'left' | 'right';
+  url: string;
+  onOpenPdf: (url: string, title: string) => void;
+}) {
+  const [page, setPage] = useState(1);
+  const [zoom, setZoom] = useState(100);
+
+  if (!url) return null;
+
+  const col = booth.themeColor || '#2563eb';
+  const sideSign = side === 'left' ? -1 : 1;
+  const title = `${booth.companyName} - ${side === 'left' ? 'Left PDF' : 'Right PDF'}`;
+  const panelW = Math.min(1.25, Math.max(0.95, booth.depth * 0.32));
+  const panelH = panelW * 1.414; // A4 portrait ratio
+  const panelY = Math.min(booth.height * 0.52, 1.85);
+
+  const openCurrentPage = () => {
+    onOpenPdf(getPdfViewerUrl(url, page, zoom), title);
+  };
+
+  const updatePage = (nextPage: number) => {
+    const safePage = Math.max(1, nextPage);
+    setPage(safePage);
+    onOpenPdf(getPdfViewerUrl(url, safePage, zoom), title);
+  };
+
+  const updateZoom = (nextZoom: number) => {
+    const safeZoom = Math.max(60, Math.min(220, nextZoom));
+    setZoom(safeZoom);
+    onOpenPdf(getPdfViewerUrl(url, page, safeZoom), title);
+  };
+
+  return (
+    <group
+      position={[sideSign * (booth.width / 2 - 0.035), panelY, 0]}
+      rotation={[0, side === 'left' ? Math.PI / 2 : -Math.PI / 2, 0]}
+    >
+      <mesh onClick={(e) => { e.stopPropagation(); openCurrentPage(); }}>
+        <boxGeometry args={[panelW + 0.1, panelH + 0.42, 0.06]} />
+        <meshStandardMaterial color="#0a0f1a" roughness={0.08} metalness={0.85} emissive={col} emissiveIntensity={0.08} />
+      </mesh>
+      <mesh position={[0, 0.12, 0.04]} onClick={(e) => { e.stopPropagation(); openCurrentPage(); }}>
+        <planeGeometry args={[panelW, panelH]} />
+        <meshStandardMaterial color="#f8fafc" roughness={0.35} metalness={0.02} />
+      </mesh>
+      <Text
+        position={[0, panelH * 0.32, 0.055]}
+        fontSize={0.11}
+        color="#111827"
+        anchorX="center"
+        anchorY="middle"
+        maxWidth={panelW * 0.82}
+      >
+        PDF
+      </Text>
+      <Text
+        position={[0, 0.1, 0.055]}
+        fontSize={0.065}
+        color="#475569"
+        anchorX="center"
+        anchorY="middle"
+        maxWidth={panelW * 0.82}
+        textAlign="center"
+      >
+        {`${side === 'left' ? 'Left' : 'Right'} Catalog\nPage ${page} | Zoom ${zoom}%`}
+      </Text>
+      <Text
+        position={[0, -panelH * 0.32, 0.055]}
+        fontSize={0.052}
+        color="#64748b"
+        anchorX="center"
+        anchorY="middle"
+        maxWidth={panelW * 0.8}
+        textAlign="center"
+      >
+        Tap to open in hall viewer
+      </Text>
+
+      <PdfPanelButton label="Prev" x={-0.48} y={-(panelH / 2 + 0.12)} onClick={() => updatePage(page - 1)} />
+      <PdfPanelButton label="Next" x={-0.16} y={-(panelH / 2 + 0.12)} onClick={() => updatePage(page + 1)} />
+      <PdfPanelButton label="-" x={0.18} y={-(panelH / 2 + 0.12)} onClick={() => updateZoom(zoom - 20)} />
+      <PdfPanelButton label="+" x={0.5} y={-(panelH / 2 + 0.12)} onClick={() => updateZoom(zoom + 20)} />
+    </group>
+  );
+}
+
 // Industrial Overhead Scaffoldings and high ceiling structure support
 function IndustrialCeiling({ hall }: { hall: Hall }) {
   return (
@@ -535,12 +590,16 @@ function BoothStructure({
   booth,
   active,
   onSelect,
+  onOpenLink,
+  onOpenPdf,
   isYoutubePlaying,
   onToggleYoutubeVideo,
 }: {
   booth: Booth;
   active: boolean;
   onSelect: () => void;
+  onOpenLink: (url: string, title: string) => void;
+  onOpenPdf: (url: string, title: string) => void;
   isYoutubePlaying: boolean;
   onToggleYoutubeVideo: (booth: Booth) => void;
 }) {
@@ -682,7 +741,7 @@ function BoothStructure({
           onClick={(e) => {
             e.stopPropagation();
             if (booth.websiteUrl) {
-              openExternalLink(booth.websiteUrl);
+              onOpenLink(normalizeExternalUrl(booth.websiteUrl), booth.companyName);
             }
           }}
           onPointerOver={(e) => {
@@ -722,16 +781,19 @@ function BoothStructure({
         onToggleYoutubeVideo={() => onToggleYoutubeVideo(booth)}
       />
 
-      {/* 8. PRODUCT DISPLAY */}
-      <group position={[0, 0.05, 0]}>
-        {booth.modelUrl ? (
-          <Suspense fallback={<PlaceholderProductStyle themeColor={col} style={booth.stylePreset} />}>
-            <GLTFModelLoader url={booth.modelUrl} scale={booth.modelScale || 1} />
-          </Suspense>
-        ) : (
-          <PlaceholderProductStyle themeColor={col} style={booth.stylePreset} />
-        )}
-      </group>
+      {/* 8. SIDE PDF PANELS — replaces the old center placeholder object */}
+      <BoothPdfPanel
+        booth={booth}
+        side="left"
+        url={getBoothPdfUrl(booth, 'left')}
+        onOpenPdf={onOpenPdf}
+      />
+      <BoothPdfPanel
+        booth={booth}
+        side="right"
+        url={getBoothPdfUrl(booth, 'right')}
+        onOpenPdf={onOpenPdf}
+      />
 
       {/* 8. FLOATING BILLBOARD — always faces visitor, large & clickable, visible in VR */}
       <Billboard position={[0, booth.height + 0.72, 0]}>
@@ -992,7 +1054,7 @@ function XRInteractionSystem({
       );
       const zones: {
         booth: Booth;
-        kind: 'info' | 'youtube';
+        kind: 'info' | 'youtube' | 'pdf-left' | 'pdf-right';
         box: THREE.Box3;
       }[] = [];
 
@@ -1017,6 +1079,23 @@ function XRInteractionSystem({
           ),
         });
       }
+
+      (['left', 'right'] as const).forEach((side) => {
+        if (!getBoothPdfUrl(booth, side)) return;
+        const sideSign = side === 'left' ? -1 : 1;
+        const panelW = Math.min(1.25, Math.max(0.95, booth.depth * 0.32));
+        const panelH = panelW * 1.414;
+        const panelY = Math.min(booth.height * 0.52, 1.85);
+        const panelCenter = new THREE.Vector3(booth.posX + sideSign * (booth.width / 2 - 0.035), panelY, booth.posZ);
+        zones.push({
+          booth,
+          kind: side === 'left' ? 'pdf-left' : 'pdf-right',
+          box: new THREE.Box3(
+            new THREE.Vector3(panelCenter.x - 0.35, panelCenter.y - panelH / 2 - 0.25, panelCenter.z - panelW / 2 - 0.2),
+            new THREE.Vector3(panelCenter.x + 0.35, panelCenter.y + panelH / 2 + 0.25, panelCenter.z + panelW / 2 + 0.2)
+          ),
+        });
+      });
 
       return zones;
     }),
@@ -1086,9 +1165,18 @@ function XRInteractionSystem({
         if (dist < closestDist) {
           closestDist = dist;
           closestPoint = aabbTarget.clone();
-          hitActionRef.current = kind === 'info'
-            ? () => openExternalLink(booth.websiteUrl, true)
-            : () => onToggleYoutubeVideo(booth);
+          if (kind === 'info') {
+            hitActionRef.current = () => onOpenOverlay(normalizeExternalUrl(booth.websiteUrl), booth.companyName);
+          } else if (kind === 'youtube') {
+            hitActionRef.current = () => onToggleYoutubeVideo(booth);
+          } else {
+            const side = kind === 'pdf-left' ? 'left' : 'right';
+            const pdfUrl = getBoothPdfUrl(booth, side);
+            hitActionRef.current = () => onOpenOverlay(
+              getPdfViewerUrl(pdfUrl, 1, 100),
+              `${booth.companyName} - ${side === 'left' ? 'Left PDF' : 'Right PDF'}`
+            );
+          }
         }
       }
     }
@@ -1500,9 +1588,58 @@ function HumanPOVXRButton({
 // ── VR Browser Panel — rendered into DOM overlay; visible as 2D layer inside Quest 3 headset
 function VRBrowserPanel({ url, title, onClose }: { url: string; title: string; onClose: () => void }) {
   const [iframeError, setIframeError] = useState(false);
-  const isVideo = /\.(mp4|webm|ogg)(\?|$)/i.test(url);
-  const isPdf   = /\.(pdf)(\?|$)/i.test(url) || url.includes('drive.google.com');
+  const [pdfPage, setPdfPage] = useState(() => {
+    const pageMatch = url.match(/[?#&]page=(\d+)/i);
+    return pageMatch ? Math.max(1, Number(pageMatch[1])) : 1;
+  });
+  const [pdfZoom, setPdfZoom] = useState(() => {
+    const zoomMatch = url.match(/[?#&]zoom=(\d+)/i);
+    return zoomMatch ? Math.max(60, Math.min(220, Number(zoomMatch[1]))) : 100;
+  });
+  const [youtubePlaying, setYoutubePlaying] = useState(true);
+  const [youtubeSeconds, setYoutubeSeconds] = useState(0);
+  const youtubeIframeRef = useRef<HTMLIFrameElement | null>(null);
+  const isVideo = /\.(mp4|webm|ogg)([?#].*)?$/i.test(url);
+  const isPdf   = /\.(pdf)([?#].*)?$/i.test(url) || url.includes('drive.google.com');
   const isYouTube = url.includes('youtube.com/embed/');
+
+  const sendYouTubeCommand = (func: string, args: unknown[] = []) => {
+    youtubeIframeRef.current?.contentWindow?.postMessage(
+      JSON.stringify({ event: 'command', func, args }),
+      'https://www.youtube.com'
+    );
+  };
+
+  useEffect(() => {
+    if (!isYouTube || !youtubePlaying) return;
+    const timer = window.setInterval(() => {
+      setYoutubeSeconds((seconds) => seconds + 1);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [isYouTube, youtubePlaying]);
+
+  const toggleYouTubePlayback = () => {
+    if (youtubePlaying) {
+      sendYouTubeCommand('pauseVideo');
+      setYoutubePlaying(false);
+    } else {
+      sendYouTubeCommand('playVideo');
+      setYoutubePlaying(true);
+    }
+  };
+
+  const seekYouTube = (deltaSeconds: number) => {
+    const nextSeconds = Math.max(0, youtubeSeconds + deltaSeconds);
+    setYoutubeSeconds(nextSeconds);
+    sendYouTubeCommand('seekTo', [nextSeconds, true]);
+    if (!youtubePlaying) {
+      sendYouTubeCommand('playVideo');
+      setYoutubePlaying(true);
+    }
+  };
+
+  const pdfBaseUrl = url.split('#')[0];
+  const pdfViewerUrl = getPdfViewerUrl(pdfBaseUrl, pdfPage, pdfZoom);
 
   if (isYouTube) {
     return (
@@ -1536,30 +1673,80 @@ function VRBrowserPanel({ url, title, onClose }: { url: string; title: string; o
             </p>
           </div>
           <button
-            onClick={onClose}
+            onClick={toggleYouTubePlayback}
             style={{
               padding: '7px 12px',
               borderRadius: 8,
-              background: '#7f1d1d',
-              border: '1px solid #991b1b',
-              color: '#fecaca',
+              background: youtubePlaying ? '#7f1d1d' : '#14532d',
+              border: `1px solid ${youtubePlaying ? '#991b1b' : '#166534'}`,
+              color: youtubePlaying ? '#fecaca' : '#bbf7d0',
               fontSize: 11,
               fontFamily: 'monospace',
               fontWeight: 700,
               cursor: 'pointer',
             }}
           >
-            Pause
+            {youtubePlaying ? 'Pause' : 'Play'}
+          </button>
+          <button
+            onClick={onClose}
+            style={{
+              width: 32,
+              height: 32,
+              borderRadius: 8,
+              background: '#1f2937',
+              border: '1px solid #374151',
+              color: '#e5e7eb',
+              cursor: 'pointer',
+              fontWeight: 800,
+            }}
+          >
+            X
           </button>
         </div>
         <div style={{ position: 'relative', width: '100%', aspectRatio: '16 / 9', background: '#000' }}>
           <iframe
+            ref={youtubeIframeRef}
             src={url}
             title={title}
             allow="autoplay; encrypted-media; picture-in-picture"
             allowFullScreen
             style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
           />
+        </div>
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(5, 1fr)',
+          gap: 8,
+          padding: 10,
+          background: '#0a0e18',
+          borderTop: '1px solid #1e2a3a',
+        }}>
+          {[
+            { label: '-30s', action: () => seekYouTube(-30) },
+            { label: '-10s', action: () => seekYouTube(-10) },
+            { label: youtubePlaying ? 'Pause' : 'Play', action: toggleYouTubePlayback },
+            { label: '+10s', action: () => seekYouTube(10) },
+            { label: '+30s', action: () => seekYouTube(30) },
+          ].map((item) => (
+            <button
+              key={item.label}
+              onClick={item.action}
+              style={{
+                padding: '9px 6px',
+                borderRadius: 8,
+                border: '1px solid #263244',
+                background: '#111827',
+                color: '#e5e7eb',
+                fontSize: 11,
+                fontFamily: 'monospace',
+                fontWeight: 800,
+                cursor: 'pointer',
+              }}
+            >
+              {item.label}
+            </button>
+          ))}
         </div>
       </div>
     );
@@ -1625,6 +1812,44 @@ function VRBrowserPanel({ url, title, onClose }: { url: string; title: string; o
         </div>
       </div>
 
+      {isPdf && (
+        <div style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(5, 1fr)',
+          gap: 8,
+          padding: '10px 16px',
+          background: '#0d111a',
+          borderBottom: '1px solid #1e2a3a',
+          flexShrink: 0,
+        }}>
+          {[
+            { label: 'Prev', action: () => setPdfPage((page) => Math.max(1, page - 1)) },
+            { label: 'Next', action: () => setPdfPage((page) => page + 1) },
+            { label: '-', action: () => setPdfZoom((zoom) => Math.max(60, zoom - 20)) },
+            { label: '+', action: () => setPdfZoom((zoom) => Math.min(220, zoom + 20)) },
+            { label: `P${pdfPage} ${pdfZoom}%`, action: () => undefined },
+          ].map((item) => (
+            <button
+              key={item.label}
+              onClick={item.action}
+              style={{
+                padding: '9px 6px',
+                borderRadius: 8,
+                border: '1px solid #263244',
+                background: '#111827',
+                color: '#e5e7eb',
+                fontSize: 11,
+                fontFamily: 'monospace',
+                fontWeight: 800,
+                cursor: 'pointer',
+              }}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Content area */}
       <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
         {isVideo ? (
@@ -1638,7 +1863,7 @@ function VRBrowserPanel({ url, title, onClose }: { url: string; title: string; o
           <>
             {!iframeError ? (
               <iframe
-                src={url}
+                src={isPdf ? pdfViewerUrl : url}
                 title={title}
                 style={{ width: '100%', height: '100%', border: 'none', background: '#fff' }}
                 sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
@@ -1834,6 +2059,8 @@ export default function ExhibitionCanvas({
               booth={booth}
               active={activeBoothId === booth.id}
               onSelect={() => onSelectBooth(booth)}
+              onOpenLink={handleOpenOverlay}
+              onOpenPdf={handleOpenOverlay}
               isYoutubePlaying={activeYoutubeBoothId === booth.id}
               onToggleYoutubeVideo={handleToggleYoutubeVideo}
             />
