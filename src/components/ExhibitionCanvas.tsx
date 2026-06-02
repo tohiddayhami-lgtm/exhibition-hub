@@ -599,6 +599,7 @@ function BoothPdfPanel({
   onPageChange: (page: number) => void;
   onZoomChange: (zoom: number) => void;
 }) {
+  const { gl } = useThree();
   const [pageCount, setPageCount] = useState(1);
   const [texture, setTexture] = useState<THREE.CanvasTexture | null>(null);
   const [status, setStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
@@ -607,9 +608,12 @@ function BoothPdfPanel({
 
   const col = booth.themeColor || '#2563eb';
   const sideSign = side === 'left' ? -1 : 1;
-  const panelW = Math.min(1.25, Math.max(0.95, booth.depth * 0.32));
+  const panelW = Math.min(1.55, Math.max(1.15, booth.depth * 0.38));
   const panelH = panelW * 1.414; // A4 portrait ratio
-  const panelY = Math.min(booth.height * 0.52, 1.85);
+  const panelY = Math.min(booth.height * 0.54, 1.95);
+  const panelX = sideSign * (booth.width / 2 - panelW / 2 - 0.18);
+  const panelZ = booth.depth / 2 - 0.52;
+  const panelYaw = side === 'left' ? Math.PI / 12 : -Math.PI / 12;
 
   useEffect(() => {
     if (!url) return;
@@ -644,9 +648,11 @@ function BoothPdfPanel({
             const pdfPage = await pdf.getPage(safePage);
             if (cancelled) return;
 
-            const desiredScale = Math.max(0.55, Math.min(1.35, zoom / 120));
+            const desiredScale = Math.max(1.25, Math.min(2.6, zoom / 70));
             const rawViewport = pdfPage.getViewport({ scale: desiredScale });
-            const maxTextureSide = 900;
+            // PDF text needs far more pixels than normal images, especially in Meta Quest.
+            // Keep it below common mobile GPU limits while avoiding the old blurry 900px cap.
+            const maxTextureSide = Math.min(2048, gl.capabilities.maxTextureSize || 2048);
             const fitScale = Math.min(1, maxTextureSide / Math.max(rawViewport.width, rawViewport.height));
             const viewport = pdfPage.getViewport({ scale: desiredScale * fitScale });
             const canvas = document.createElement('canvas');
@@ -660,7 +666,10 @@ function BoothPdfPanel({
 
             const nextTexture = new THREE.CanvasTexture(canvas);
             nextTexture.colorSpace = THREE.SRGBColorSpace;
-            nextTexture.anisotropy = 4;
+            nextTexture.anisotropy = Math.min(8, gl.capabilities.getMaxAnisotropy?.() ?? 4);
+            nextTexture.generateMipmaps = false;
+            nextTexture.minFilter = THREE.LinearFilter;
+            nextTexture.magFilter = THREE.LinearFilter;
             nextTexture.needsUpdate = true;
 
             textureRef.current?.dispose();
@@ -687,7 +696,7 @@ function BoothPdfPanel({
     return () => {
       cancelled = true;
     };
-  }, [url, page, zoom, shouldRender]);
+  }, [url, page, zoom, shouldRender, gl]);
 
   useEffect(() => {
     return () => {
@@ -702,8 +711,8 @@ function BoothPdfPanel({
 
   return (
     <group
-      position={[sideSign * (booth.width / 2 - 0.035), panelY, 0]}
-      rotation={[0, side === 'left' ? Math.PI / 2 : -Math.PI / 2, 0]}
+      position={[panelX, panelY, panelZ]}
+      rotation={[0, panelYaw, 0]}
     >
       <mesh onClick={(e) => e.stopPropagation()}>
         <boxGeometry args={[panelW + 0.1, panelH + 0.42, 0.06]} />
@@ -712,9 +721,9 @@ function BoothPdfPanel({
       <mesh position={[0, 0.12, 0.04]} onClick={(e) => e.stopPropagation()}>
         <planeGeometry args={[panelW, panelH]} />
         {texture ? (
-          <meshBasicMaterial map={texture} toneMapped={false} />
+          <meshBasicMaterial map={texture} toneMapped={false} side={THREE.DoubleSide} />
         ) : (
-          <meshStandardMaterial color="#f8fafc" roughness={0.35} metalness={0.02} />
+          <meshStandardMaterial color="#f8fafc" roughness={0.35} metalness={0.02} side={THREE.DoubleSide} />
         )}
       </mesh>
       <Text
@@ -1331,10 +1340,11 @@ function XRInteractionSystem({
       (['left', 'right'] as const).forEach((side) => {
         if (!getBoothPdfUrl(booth, side)) return;
         const sideSign = side === 'left' ? -1 : 1;
-        const panelW = Math.min(1.25, Math.max(0.95, booth.depth * 0.32));
+        const panelW = Math.min(1.55, Math.max(1.15, booth.depth * 0.38));
         const panelH = panelW * 1.414;
-        const panelY = Math.min(booth.height * 0.52, 1.85);
-        const panelX = booth.posX + sideSign * (booth.width / 2 - 0.035);
+        const panelY = Math.min(booth.height * 0.54, 1.95);
+        const panelX = booth.posX + sideSign * (booth.width / 2 - panelW / 2 - 0.18);
+        const panelZ = booth.posZ + booth.depth / 2 - 0.52;
         const buttonY = panelY - (panelH / 2 + 0.12);
         const buttonKinds = [
           { localX: -0.48, suffix: 'prev' },
@@ -1344,13 +1354,13 @@ function XRInteractionSystem({
         ] as const;
 
         buttonKinds.forEach(({ localX, suffix }) => {
-          const buttonZ = booth.posZ + sideSign * localX;
+          const buttonX = panelX + localX;
           zones.push({
             booth,
             kind: `pdf-${side}-${suffix}` as typeof zones[number]['kind'],
             box: new THREE.Box3(
-              new THREE.Vector3(panelX - 0.38, buttonY - 0.2, buttonZ - 0.28),
-              new THREE.Vector3(panelX + 0.38, buttonY + 0.2, buttonZ + 0.28)
+              new THREE.Vector3(buttonX - 0.34, buttonY - 0.2, panelZ - 0.3),
+              new THREE.Vector3(buttonX + 0.34, buttonY + 0.2, panelZ + 0.3)
             ),
           });
         });
@@ -1904,6 +1914,7 @@ function HumanPOVXRButton({
       };
 
       session.addEventListener('end', handleSessionEnd);
+      gl.xr.setFramebufferScaleFactor(1.2);
       await gl.xr.setSession(session as never);
       setXrActive(true);
       setStatusMessage('Rendering from headset');
