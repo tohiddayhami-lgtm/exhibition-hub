@@ -586,6 +586,7 @@ function BoothPdfPanel({
   url,
   page,
   zoom,
+  shouldRender,
   onPageChange,
   onZoomChange,
 }: {
@@ -594,12 +595,13 @@ function BoothPdfPanel({
   url: string;
   page: number;
   zoom: number;
+  shouldRender: boolean;
   onPageChange: (page: number) => void;
   onZoomChange: (zoom: number) => void;
 }) {
   const [pageCount, setPageCount] = useState(1);
   const [texture, setTexture] = useState<THREE.CanvasTexture | null>(null);
-  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [status, setStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [errorMessage, setErrorMessage] = useState('');
   const textureRef = useRef<THREE.CanvasTexture | null>(null);
 
@@ -611,6 +613,10 @@ function BoothPdfPanel({
 
   useEffect(() => {
     if (!url) return;
+    if (!shouldRender) {
+      setStatus('idle');
+      return;
+    }
 
     let cancelled = false;
     setStatus('loading');
@@ -638,7 +644,11 @@ function BoothPdfPanel({
             const pdfPage = await pdf.getPage(safePage);
             if (cancelled) return;
 
-            const viewport = pdfPage.getViewport({ scale: Math.max(0.8, Math.min(2.4, zoom / 80)) });
+            const desiredScale = Math.max(0.55, Math.min(1.35, zoom / 120));
+            const rawViewport = pdfPage.getViewport({ scale: desiredScale });
+            const maxTextureSide = 900;
+            const fitScale = Math.min(1, maxTextureSide / Math.max(rawViewport.width, rawViewport.height));
+            const viewport = pdfPage.getViewport({ scale: desiredScale * fitScale });
             const canvas = document.createElement('canvas');
             const context = canvas.getContext('2d');
             if (!context) throw new Error('Canvas 2D context is unavailable');
@@ -677,7 +687,7 @@ function BoothPdfPanel({
     return () => {
       cancelled = true;
     };
-  }, [url, page, zoom]);
+  }, [url, page, zoom, shouldRender]);
 
   useEffect(() => {
     return () => {
@@ -717,6 +727,8 @@ function BoothPdfPanel({
       >
         {status === 'loading'
           ? 'Loading PDF...'
+          : status === 'idle'
+            ? 'Select booth to load PDF'
           : status === 'error'
             ? `PDF cannot be rendered\n${errorMessage || 'Use a direct public PDF URL'}`
             : `${side === 'left' ? 'Left' : 'Right'} PDF | Page ${page}/${pageCount} | Zoom ${zoom}%`}
@@ -995,6 +1007,7 @@ function BoothStructure({
         url={getBoothPdfUrl(booth, 'left')}
         page={leftPdfState.page}
         zoom={leftPdfState.zoom}
+        shouldRender={active || hovered}
         onPageChange={(page) => updatePdfPanel(booth.id, 'left', { page })}
         onZoomChange={(zoom) => updatePdfPanel(booth.id, 'left', { zoom })}
       />
@@ -1004,6 +1017,7 @@ function BoothStructure({
         url={getBoothPdfUrl(booth, 'right')}
         page={rightPdfState.page}
         zoom={rightPdfState.zoom}
+        shouldRender={active || hovered}
         onPageChange={(page) => updatePdfPanel(booth.id, 'right', { page })}
         onZoomChange={(zoom) => updatePdfPanel(booth.id, 'right', { zoom })}
       />
@@ -1707,6 +1721,66 @@ function KeyboardMovementController({
   return null;
 }
 
+function DesktopOrbitControls({ visitorPos }: { visitorPos: [number, number, number] }) {
+  const controlsRef = useRef<React.ElementRef<typeof OrbitControls> | null>(null);
+  const isInteractingRef = useRef(false);
+
+  useEffect(() => {
+    const controls = controlsRef.current;
+    if (!controls) return;
+
+    const handleStart = () => {
+      isInteractingRef.current = true;
+    };
+    const handleEnd = () => {
+      isInteractingRef.current = false;
+    };
+
+    controls.addEventListener('start', handleStart);
+    controls.addEventListener('end', handleEnd);
+
+    return () => {
+      controls.removeEventListener('start', handleStart);
+      controls.removeEventListener('end', handleEnd);
+    };
+  }, []);
+
+  useEffect(() => {
+    const controls = controlsRef.current;
+    if (!controls || isInteractingRef.current) return;
+
+    controls.target.set(visitorPos[0], 1.2, visitorPos[2]);
+    controls.update();
+  }, [visitorPos]);
+
+  return (
+    <OrbitControls
+      ref={controlsRef}
+      makeDefault
+      enableDamping
+      dampingFactor={0.06}
+      enableZoom
+      enablePan
+      screenSpacePanning
+      zoomSpeed={0.9}
+      panSpeed={0.8}
+      rotateSpeed={0.75}
+      minDistance={2}
+      maxDistance={45}
+      maxPolarAngle={Math.PI / 2.08}
+      mouseButtons={{
+        LEFT: THREE.MOUSE.ROTATE,
+        MIDDLE: THREE.MOUSE.DOLLY,
+        RIGHT: THREE.MOUSE.PAN,
+      }}
+      touches={{
+        ONE: THREE.TOUCH.ROTATE,
+        TWO: THREE.TOUCH.DOLLY_PAN,
+      }}
+    />
+  );
+}
+
 function HumanPOVXRButton({
   visitorPos,
   povEnabled,
@@ -2333,15 +2407,14 @@ export default function ExhibitionCanvas({
         vrOverlayRef.current
       )}
       <Canvas
-        shadows
+        shadows={false}
         camera={{ position: [0, 8, 16], fov: 50 }}
         className="w-full h-full"
-        // Adaptive DPR: cap at 1.5× so mobile/Quest doesn't over-render
-        dpr={[1, 1.5]}
-        // Adaptive performance: automatically lowers resolution if fps drops
-        performance={{ min: 0.5 }}
+        // Keep laptop rendering light; users can still zoom in with the camera.
+        dpr={[0.75, 1]}
+        performance={{ min: 0.35 }}
         // Prefer high-performance GPU on dual-GPU laptops/tablets
-        gl={{ antialias: true, powerPreference: 'high-performance' }}
+        gl={{ antialias: false, powerPreference: 'high-performance' }}
       >
         <color attach="background" args={['#12151a']} />
 
@@ -2353,36 +2426,22 @@ export default function ExhibitionCanvas({
 
         {/* Primary overhead directional (hall-wide fill) */}
         <directionalLight
-          castShadow
           position={[0, 18, 6]}
-          intensity={3.5}
+          intensity={2.6}
           color="#ffffff"
-          shadow-mapSize-width={1024}
-          shadow-mapSize-height={1024}
-          shadow-camera-far={50}
-          shadow-camera-left={-25}
-          shadow-camera-right={25}
-          shadow-camera-top={25}
-          shadow-camera-bottom={-25}
-          shadow-bias={-0.0005}
         />
 
         {/* Front-fill directional to eliminate harsh back-shadows on booth faces */}
-        <directionalLight position={[0, 8, 14]} intensity={2.0} color="#fff8f0" />
+        <directionalLight position={[0, 8, 14]} intensity={1.4} color="#fff8f0" />
 
-        {/* Professional exhibition overhead spotlights — warm white halogen */}
-        <pointLight position={[-8, 9, -8]}  intensity={4.0} distance={18} color="#fff6e8" />
-        <pointLight position={[8,  9, -8]}  intensity={4.0} distance={18} color="#fff6e8" />
-        <pointLight position={[-8, 9,  0]}  intensity={4.0} distance={18} color="#fff6e8" />
-        <pointLight position={[8,  9,  0]}  intensity={4.0} distance={18} color="#fff6e8" />
-        <pointLight position={[-8, 9,  8]}  intensity={4.0} distance={18} color="#fff6e8" />
-        <pointLight position={[8,  9,  8]}  intensity={4.0} distance={18} color="#fff6e8" />
-        <pointLight position={[0,  9, -8]}  intensity={3.5} distance={18} color="#fff6e8" />
-        <pointLight position={[0,  9,  8]}  intensity={3.5} distance={18} color="#fff6e8" />
+        {/* Lightweight exhibition accent lighting for laptop performance */}
+        <pointLight position={[-9, 8, -7]} intensity={2.4} distance={18} color="#fff6e8" />
+        <pointLight position={[9, 8, -7]} intensity={2.4} distance={18} color="#fff6e8" />
+        <pointLight position={[-9, 8, 7]} intensity={2.2} distance={18} color="#fff6e8" />
+        <pointLight position={[9, 8, 7]} intensity={2.2} distance={18} color="#fff6e8" />
 
         {/* Centre aisle accent lights — blue-white display lighting */}
-        <pointLight position={[0, 6, -4]} intensity={2.5} distance={10} color="#e8f4ff" />
-        <pointLight position={[0, 6,  4]} intensity={2.5} distance={10} color="#e8f4ff" />
+        <pointLight position={[0, 6, 0]} intensity={1.8} distance={14} color="#e8f4ff" />
 
         {/* 3D Exhibition Structure Geometries */}
         <Suspense fallback={null}>
@@ -2458,16 +2517,7 @@ export default function ExhibitionCanvas({
           povEnabled ? (
             <PointerLockControls />
           ) : (
-            <OrbitControls
-              enableDamping
-              dampingFactor={0.08}
-              enableZoom
-              zoomSpeed={1.2}
-              minDistance={2}
-              maxDistance={40}
-              maxPolarAngle={Math.PI / 2.1}
-              target={[visitorPos[0], 1.2, visitorPos[2]]}
-            />
+            <DesktopOrbitControls visitorPos={visitorPos} />
           )
         )}
       </Canvas>
