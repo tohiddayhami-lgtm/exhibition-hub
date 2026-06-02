@@ -3,12 +3,15 @@ import { createPortal } from 'react-dom';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, Html, PointerLockControls, Text, Billboard } from '@react-three/drei';
 import * as THREE from 'three';
+import * as pdfjsLib from 'pdfjs-dist';
 import { Hall, Booth } from '../types';
 import { Eye, Glasses } from 'lucide-react';
 
 const HUMAN_EYE_HEIGHT = 1.65;
 const VISITOR_BODY_HEIGHT = 0.8;
 const VR_SESSION_MODE = 'immersive-vr';
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.mjs', import.meta.url).toString();
 
 type XRSessionLike = {
   end: () => Promise<void>;
@@ -25,6 +28,12 @@ type XRSystemLike = {
       domOverlay?: { root: Element };
     }
   ) => Promise<XRSessionLike>;
+};
+
+type PdfPanelSide = 'left' | 'right';
+type PdfPanelState = {
+  page: number;
+  zoom: number;
 };
 
 function getNavigatorXR() {
@@ -153,7 +162,7 @@ function toYouTubeEmbed(id: string) {
   return `https://www.youtube.com/embed/${id}?autoplay=1&enablejsapi=1&playsinline=1&rel=0&modestbranding=1&origin=${origin}`;
 }
 
-function getBoothPdfUrl(booth: Booth, side: 'left' | 'right') {
+function getBoothPdfUrl(booth: Booth, side: PdfPanelSide) {
   return side === 'left' ? booth.catalogUrl || '' : booth.pdfRightUrl || '';
 }
 
@@ -449,25 +458,98 @@ function BoothPdfPanel({
   booth,
   side,
   url,
+  page,
+  zoom,
+  onPageChange,
+  onZoomChange,
 }: {
   booth: Booth;
-  side: 'left' | 'right';
+  side: PdfPanelSide;
   url: string;
+  page: number;
+  zoom: number;
+  onPageChange: (page: number) => void;
+  onZoomChange: (zoom: number) => void;
 }) {
-  const [page, setPage] = useState(1);
-  const [zoom, setZoom] = useState(100);
-
-  if (!url) return null;
+  const [pageCount, setPageCount] = useState(1);
+  const [texture, setTexture] = useState<THREE.CanvasTexture | null>(null);
+  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const textureRef = useRef<THREE.CanvasTexture | null>(null);
 
   const col = booth.themeColor || '#2563eb';
   const sideSign = side === 'left' ? -1 : 1;
   const panelW = Math.min(1.25, Math.max(0.95, booth.depth * 0.32));
   const panelH = panelW * 1.414; // A4 portrait ratio
   const panelY = Math.min(booth.height * 0.52, 1.85);
-  const viewerUrl = getPdfViewerUrl(url, page, zoom);
 
-  const updatePage = (nextPage: number) => setPage(Math.max(1, nextPage));
-  const updateZoom = (nextZoom: number) => setZoom(Math.max(60, Math.min(220, nextZoom)));
+  useEffect(() => {
+    if (!url) return;
+
+    let cancelled = false;
+    setStatus('loading');
+
+    const renderPdfPage = async () => {
+      try {
+        const loadingTask = pdfjsLib.getDocument({
+          url: normalizeExternalUrl(url),
+          withCredentials: false,
+        });
+        const pdf = await loadingTask.promise;
+        if (cancelled) return;
+
+        const safePage = Math.max(1, Math.min(page, pdf.numPages));
+        setPageCount(pdf.numPages);
+        if (safePage !== page) {
+          onPageChange(safePage);
+          return;
+        }
+
+        const pdfPage = await pdf.getPage(safePage);
+        if (cancelled) return;
+
+        const viewport = pdfPage.getViewport({ scale: Math.max(0.8, Math.min(2.4, zoom / 80)) });
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        if (!context) throw new Error('Canvas 2D context is unavailable');
+
+        canvas.width = Math.floor(viewport.width);
+        canvas.height = Math.floor(viewport.height);
+        await pdfPage.render({ canvas, canvasContext: context, viewport }).promise;
+        if (cancelled) return;
+
+        const nextTexture = new THREE.CanvasTexture(canvas);
+        nextTexture.colorSpace = THREE.SRGBColorSpace;
+        nextTexture.anisotropy = 4;
+        nextTexture.needsUpdate = true;
+
+        textureRef.current?.dispose();
+        textureRef.current = nextTexture;
+        setTexture(nextTexture);
+        setStatus('ready');
+      } catch (error) {
+        if (cancelled) return;
+        console.warn('Failed to render spatial PDF panel:', error);
+        setStatus('error');
+      }
+    };
+
+    renderPdfPage();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [url, page, zoom]);
+
+  useEffect(() => {
+    return () => {
+      textureRef.current?.dispose();
+    };
+  }, []);
+
+  if (!url) return null;
+
+  const updatePage = (nextPage: number) => onPageChange(Math.max(1, Math.min(pageCount, nextPage)));
+  const updateZoom = (nextZoom: number) => onZoomChange(Math.max(60, Math.min(220, nextZoom)));
 
   return (
     <group
@@ -480,96 +562,26 @@ function BoothPdfPanel({
       </mesh>
       <mesh position={[0, 0.12, 0.04]} onClick={(e) => e.stopPropagation()}>
         <planeGeometry args={[panelW, panelH]} />
-        <meshStandardMaterial color="#f8fafc" roughness={0.35} metalness={0.02} />
+        {texture ? (
+          <meshBasicMaterial map={texture} toneMapped={false} />
+        ) : (
+          <meshStandardMaterial color="#f8fafc" roughness={0.35} metalness={0.02} />
+        )}
       </mesh>
-
-      <Html
-        transform
-        position={[0, 0.12, 0.075]}
-        distanceFactor={1.45}
-        occlude={false}
-        style={{ pointerEvents: 'auto' }}
+      <Text
+        position={[0, panelH / 2 - 0.08, 0.07]}
+        fontSize={0.055}
+        color={status === 'error' ? '#ef4444' : '#111827'}
+        anchorX="center"
+        anchorY="middle"
+        maxWidth={panelW * 0.9}
       >
-        <div
-          onClick={(e) => e.stopPropagation()}
-          onPointerDown={(e) => e.stopPropagation()}
-          style={{
-            width: 280,
-            height: 436,
-            background: '#0a0f1a',
-            border: `3px solid ${col}`,
-            borderRadius: 12,
-            overflow: 'hidden',
-            boxShadow: '0 14px 50px rgba(0,0,0,0.45)',
-            fontFamily: 'system-ui, sans-serif',
-          }}
-        >
-          <div
-            style={{
-              height: 34,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              padding: '0 10px',
-              background: '#111827',
-              color: '#e5e7eb',
-              fontSize: 10,
-              fontWeight: 800,
-            }}
-          >
-            <span>{side === 'left' ? 'LEFT PDF' : 'RIGHT PDF'}</span>
-            <span>{`P${page} ${zoom}%`}</span>
-          </div>
-          <iframe
-            src={viewerUrl}
-            title={`${booth.companyName} ${side} PDF`}
-            style={{
-              width: '100%',
-              height: 350,
-              border: 'none',
-              background: '#fff',
-              display: 'block',
-            }}
-          />
-          <div
-            style={{
-              height: 52,
-              display: 'grid',
-              gridTemplateColumns: 'repeat(4, 1fr)',
-              gap: 6,
-              padding: 6,
-              background: '#0f172a',
-            }}
-          >
-            {[
-              { label: 'Prev', action: () => updatePage(page - 1) },
-              { label: 'Next', action: () => updatePage(page + 1) },
-              { label: 'Zoom -', action: () => updateZoom(zoom - 20) },
-              { label: 'Zoom +', action: () => updateZoom(zoom + 20) },
-            ].map((item) => (
-              <button
-                key={item.label}
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  item.action();
-                }}
-                style={{
-                  border: '1px solid #334155',
-                  borderRadius: 8,
-                  background: '#1f2937',
-                  color: '#e5e7eb',
-                  fontSize: 10,
-                  fontWeight: 800,
-                  cursor: 'pointer',
-                }}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      </Html>
+        {status === 'loading'
+          ? 'Loading PDF...'
+          : status === 'error'
+            ? 'PDF cannot be rendered'
+            : `${side === 'left' ? 'Left' : 'Right'} PDF | Page ${page}/${pageCount} | Zoom ${zoom}%`}
+      </Text>
 
       <PdfPanelButton label="Prev" x={-0.48} y={-(panelH / 2 + 0.12)} onClick={() => updatePage(page - 1)} />
       <PdfPanelButton label="Next" x={-0.16} y={-(panelH / 2 + 0.12)} onClick={() => updatePage(page + 1)} />
@@ -643,12 +655,18 @@ function BoothStructure({
   onSelect,
   isYoutubePlaying,
   onToggleYoutubeVideo,
+  leftPdfState,
+  rightPdfState,
+  updatePdfPanel,
 }: {
   booth: Booth;
   active: boolean;
   onSelect: () => void;
   isYoutubePlaying: boolean;
   onToggleYoutubeVideo: (booth: Booth) => void;
+  leftPdfState: PdfPanelState;
+  rightPdfState: PdfPanelState;
+  updatePdfPanel: (boothId: string, side: PdfPanelSide, patch: Partial<PdfPanelState>) => void;
 }) {
   const [hovered, setHovered] = useState(false);
   const [infoHovered, setInfoHovered] = useState(false);
@@ -833,11 +851,19 @@ function BoothStructure({
         booth={booth}
         side="left"
         url={getBoothPdfUrl(booth, 'left')}
+        page={leftPdfState.page}
+        zoom={leftPdfState.zoom}
+        onPageChange={(page) => updatePdfPanel(booth.id, 'left', { page })}
+        onZoomChange={(zoom) => updatePdfPanel(booth.id, 'left', { zoom })}
       />
       <BoothPdfPanel
         booth={booth}
         side="right"
         url={getBoothPdfUrl(booth, 'right')}
+        page={rightPdfState.page}
+        zoom={rightPdfState.zoom}
+        onPageChange={(page) => updatePdfPanel(booth.id, 'right', { page })}
+        onZoomChange={(zoom) => updatePdfPanel(booth.id, 'right', { zoom })}
       />
 
       {/* 8. FLOATING BILLBOARD — always faces visitor, large & clickable, visible in VR */}
@@ -895,7 +921,11 @@ function BoothStructure({
 const MemoBoothStructure = React.memo(BoothStructure, (prev, next) =>
   prev.active === next.active &&
   prev.booth === next.booth &&
-  prev.isYoutubePlaying === next.isYoutubePlaying
+  prev.isYoutubePlaying === next.isYoutubePlaying &&
+  prev.leftPdfState.page === next.leftPdfState.page &&
+  prev.leftPdfState.zoom === next.leftPdfState.zoom &&
+  prev.rightPdfState.page === next.rightPdfState.page &&
+  prev.rightPdfState.zoom === next.rightPdfState.zoom
 );
 
 // Frame core to handle smoothly interpolating camera and controls states
@@ -1060,6 +1090,7 @@ function XRInteractionSystem({
   onOpenOverlay,
   onToggleYoutubeVideo,
   activeYoutubeBoothId,
+  adjustPdfPanel,
 }: {
   booths: Booth[];
   selectedBooth: Booth | null;
@@ -1067,6 +1098,7 @@ function XRInteractionSystem({
   onOpenOverlay: (url: string, title: string) => void;
   onToggleYoutubeVideo: (booth: Booth) => void;
   activeYoutubeBoothId: string | null;
+  adjustPdfPanel: (boothId: string, side: PdfPanelSide, pageDelta: number, zoomDelta: number) => void;
 }) {
   const { gl } = useThree();
 
@@ -1101,7 +1133,17 @@ function XRInteractionSystem({
       );
       const zones: {
         booth: Booth;
-        kind: 'info' | 'youtube' | 'pdf-left' | 'pdf-right';
+        kind:
+          | 'info'
+          | 'youtube'
+          | 'pdf-left-prev'
+          | 'pdf-left-next'
+          | 'pdf-left-zoom-out'
+          | 'pdf-left-zoom-in'
+          | 'pdf-right-prev'
+          | 'pdf-right-next'
+          | 'pdf-right-zoom-out'
+          | 'pdf-right-zoom-in';
         box: THREE.Box3;
       }[] = [];
 
@@ -1133,14 +1175,25 @@ function XRInteractionSystem({
         const panelW = Math.min(1.25, Math.max(0.95, booth.depth * 0.32));
         const panelH = panelW * 1.414;
         const panelY = Math.min(booth.height * 0.52, 1.85);
-        const panelCenter = new THREE.Vector3(booth.posX + sideSign * (booth.width / 2 - 0.035), panelY, booth.posZ);
-        zones.push({
-          booth,
-          kind: side === 'left' ? 'pdf-left' : 'pdf-right',
-          box: new THREE.Box3(
-            new THREE.Vector3(panelCenter.x - 0.35, panelCenter.y - panelH / 2 - 0.25, panelCenter.z - panelW / 2 - 0.2),
-            new THREE.Vector3(panelCenter.x + 0.35, panelCenter.y + panelH / 2 + 0.25, panelCenter.z + panelW / 2 + 0.2)
-          ),
+        const panelX = booth.posX + sideSign * (booth.width / 2 - 0.035);
+        const buttonY = panelY - (panelH / 2 + 0.12);
+        const buttonKinds = [
+          { localX: -0.48, suffix: 'prev' },
+          { localX: -0.16, suffix: 'next' },
+          { localX: 0.18, suffix: 'zoom-out' },
+          { localX: 0.5, suffix: 'zoom-in' },
+        ] as const;
+
+        buttonKinds.forEach(({ localX, suffix }) => {
+          const buttonZ = booth.posZ + sideSign * localX;
+          zones.push({
+            booth,
+            kind: `pdf-${side}-${suffix}` as typeof zones[number]['kind'],
+            box: new THREE.Box3(
+              new THREE.Vector3(panelX - 0.28, buttonY - 0.14, buttonZ - 0.2),
+              new THREE.Vector3(panelX + 0.28, buttonY + 0.14, buttonZ + 0.2)
+            ),
+          });
         });
       });
 
@@ -1219,12 +1272,16 @@ function XRInteractionSystem({
           } else if (kind === 'youtube') {
             hitActionRef.current = () => onToggleYoutubeVideo(booth);
           } else {
-            const side = kind === 'pdf-left' ? 'left' : 'right';
-            const pdfUrl = getBoothPdfUrl(booth, side);
-            hitActionRef.current = () => onOpenOverlay(
-              getPdfViewerUrl(pdfUrl, 1, 100),
-              `${booth.companyName} - ${side === 'left' ? 'Left PDF' : 'Right PDF'}`
-            );
+            const side: PdfPanelSide = kind.includes('left') ? 'left' : 'right';
+            if (kind.endsWith('prev')) {
+              hitActionRef.current = () => adjustPdfPanel(booth.id, side, -1, 0);
+            } else if (kind.endsWith('next')) {
+              hitActionRef.current = () => adjustPdfPanel(booth.id, side, 1, 0);
+            } else if (kind.endsWith('zoom-out')) {
+              hitActionRef.current = () => adjustPdfPanel(booth.id, side, 0, -20);
+            } else {
+              hitActionRef.current = () => adjustPdfPanel(booth.id, side, 0, 20);
+            }
           }
         }
       }
@@ -1971,11 +2028,44 @@ export default function ExhibitionCanvas({
   const [povEnabled, setPovEnabled] = useState(false);
   const [xrActive, setXrActive] = useState(false);
   const [activeYoutubeBoothId, setActiveYoutubeBoothId] = useState<string | null>(null);
+  const [pdfPanelStates, setPdfPanelStates] = useState<Record<string, PdfPanelState>>({});
 
   // VR Browser Overlay state
   const vrOverlayRef  = useRef<HTMLDivElement | null>(null);
   const [vrOverlayUrl, setVrOverlayUrl]   = useState<string | null>(null);
   const [vrOverlayTitle, setVrOverlayTitle] = useState('');
+
+  const getPdfPanelState = useCallback((boothId: string, side: PdfPanelSide): PdfPanelState => {
+    return pdfPanelStates[`${boothId}:${side}`] ?? { page: 1, zoom: 100 };
+  }, [pdfPanelStates]);
+
+  const updatePdfPanel = useCallback((boothId: string, side: PdfPanelSide, patch: Partial<PdfPanelState>) => {
+    setPdfPanelStates((current) => {
+      const key = `${boothId}:${side}`;
+      const previous = current[key] ?? { page: 1, zoom: 100 };
+      return {
+        ...current,
+        [key]: {
+          page: Math.max(1, patch.page ?? previous.page),
+          zoom: Math.max(60, Math.min(220, patch.zoom ?? previous.zoom)),
+        },
+      };
+    });
+  }, []);
+
+  const adjustPdfPanel = useCallback((boothId: string, side: PdfPanelSide, pageDelta: number, zoomDelta: number) => {
+    setPdfPanelStates((current) => {
+      const key = `${boothId}:${side}`;
+      const previous = current[key] ?? { page: 1, zoom: 100 };
+      return {
+        ...current,
+        [key]: {
+          page: Math.max(1, previous.page + pageDelta),
+          zoom: Math.max(60, Math.min(220, previous.zoom + zoomDelta)),
+        },
+      };
+    });
+  }, []);
 
   const handleOpenOverlay = useCallback((url: string, title: string) => {
     setActiveYoutubeBoothId(null);
@@ -2110,6 +2200,9 @@ export default function ExhibitionCanvas({
               onSelect={() => onSelectBooth(booth)}
               isYoutubePlaying={activeYoutubeBoothId === booth.id}
               onToggleYoutubeVideo={handleToggleYoutubeVideo}
+              leftPdfState={getPdfPanelState(booth.id, 'left')}
+              rightPdfState={getPdfPanelState(booth.id, 'right')}
+              updatePdfPanel={updatePdfPanel}
             />
           ))}
         </Suspense>
@@ -2156,6 +2249,7 @@ export default function ExhibitionCanvas({
             onOpenOverlay={handleOpenOverlay}
             onToggleYoutubeVideo={handleToggleYoutubeVideo}
             activeYoutubeBoothId={activeYoutubeBoothId}
+            adjustPdfPanel={adjustPdfPanel}
           />
         )}
 
