@@ -172,7 +172,22 @@ function getGoogleDriveFileId(url: string) {
   return null;
 }
 
-async function fetchPdfBytes(candidateUrl: string) {
+function getPdfDownloadUrlFromHtml(html: string, baseUrl: string) {
+  const htmlDecoded = html.replace(/&amp;/g, '&');
+  const hrefMatch = htmlDecoded.match(/href="([^"]*(?:uc\?export=download|drive\.usercontent\.google\.com\/download)[^"]*)"/i);
+  if (hrefMatch?.[1]) {
+    return new URL(hrefMatch[1], baseUrl).toString();
+  }
+
+  const jsonUrlMatch = htmlDecoded.match(/https:\\\/\\\/drive\.usercontent\.google\.com\\\/download[^"]+/i);
+  if (jsonUrlMatch?.[0]) {
+    return jsonUrlMatch[0].replace(/\\\//g, '/').replace(/\\u003d/g, '=').replace(/\\u0026/g, '&');
+  }
+
+  return null;
+}
+
+async function fetchPdfBytes(candidateUrl: string, redirectDepth = 0): Promise<Uint8Array> {
   const response = await fetch(candidateUrl, {
     mode: 'cors',
     credentials: 'omit',
@@ -190,6 +205,12 @@ async function fetchPdfBytes(candidateUrl: string) {
   const header = new TextDecoder('ascii').decode(bytes.slice(0, 5));
 
   if (!header.startsWith('%PDF')) {
+    const html = new TextDecoder('utf-8').decode(bytes);
+    const downloadUrl = redirectDepth < 2 ? getPdfDownloadUrlFromHtml(html, candidateUrl) : null;
+    if (downloadUrl) {
+      return fetchPdfBytes(downloadUrl, redirectDepth + 1);
+    }
+
     throw new Error(contentType.includes('html') ? 'Link opens an HTML page, not a PDF file' : 'Response is not a PDF file');
   }
 
@@ -707,7 +728,7 @@ function BoothPdfPanel({
         {status === 'loading'
           ? 'Loading PDF...'
           : status === 'idle'
-            ? 'Select booth to load PDF'
+            ? 'Loading PDF...'
           : status === 'error'
             ? `PDF cannot be rendered\n${errorMessage || 'Use a direct public PDF URL'}`
             : `${side === 'left' ? 'Left' : 'Right'} PDF | Page ${page}/${pageCount} | Zoom ${zoom}%`}
@@ -986,7 +1007,7 @@ function BoothStructure({
         url={getBoothPdfUrl(booth, 'left')}
         page={leftPdfState.page}
         zoom={leftPdfState.zoom}
-        shouldRender={active || hovered}
+        shouldRender
         onPageChange={(page) => updatePdfPanel(booth.id, 'left', { page })}
         onZoomChange={(zoom) => updatePdfPanel(booth.id, 'left', { zoom })}
       />
@@ -996,7 +1017,7 @@ function BoothStructure({
         url={getBoothPdfUrl(booth, 'right')}
         page={rightPdfState.page}
         zoom={rightPdfState.zoom}
-        shouldRender={active || hovered}
+        shouldRender
         onPageChange={(page) => updatePdfPanel(booth.id, 'right', { page })}
         onZoomChange={(zoom) => updatePdfPanel(booth.id, 'right', { zoom })}
       />
@@ -1280,6 +1301,15 @@ function XRInteractionSystem({
         const btnW = screenW * 0.28;
         const btnH = barH * 0.78;
         const btnY = booth.height * 0.42 - (screenH / 2 + barH / 2 + 0.04);
+        zones.push({
+          booth,
+          kind: 'youtube-toggle',
+          box: new THREE.Box3(
+            new THREE.Vector3(lcdCenter.x - screenW / 2, lcdCenter.y - screenH / 2, lcdCenter.z - 0.18),
+            new THREE.Vector3(lcdCenter.x + screenW / 2, lcdCenter.y + screenH / 2, lcdCenter.z + 0.18)
+          ),
+        });
+
         const controls = [
           { kind: 'youtube-back', x: booth.posX - (btnW + 0.08) },
           { kind: 'youtube-toggle', x: booth.posX },
@@ -1291,8 +1321,8 @@ function XRInteractionSystem({
             booth,
             kind: control.kind,
             box: new THREE.Box3(
-              new THREE.Vector3(control.x - btnW / 2, btnY - btnH / 2, lcdCenter.z - 0.08),
-              new THREE.Vector3(control.x + btnW / 2, btnY + btnH / 2, lcdCenter.z + 0.08)
+              new THREE.Vector3(control.x - btnW / 2 - 0.12, btnY - btnH / 2 - 0.1, lcdCenter.z - 0.22),
+              new THREE.Vector3(control.x + btnW / 2 + 0.12, btnY + btnH / 2 + 0.1, lcdCenter.z + 0.22)
             ),
           });
         });
@@ -1319,8 +1349,8 @@ function XRInteractionSystem({
             booth,
             kind: `pdf-${side}-${suffix}` as typeof zones[number]['kind'],
             box: new THREE.Box3(
-              new THREE.Vector3(panelX - 0.28, buttonY - 0.14, buttonZ - 0.2),
-              new THREE.Vector3(panelX + 0.28, buttonY + 0.14, buttonZ + 0.2)
+              new THREE.Vector3(panelX - 0.38, buttonY - 0.2, buttonZ - 0.28),
+              new THREE.Vector3(panelX + 0.38, buttonY + 0.2, buttonZ + 0.28)
             ),
           });
         });
@@ -1334,111 +1364,139 @@ function XRInteractionSystem({
   useFrame(() => {
     if (!gl.xr.isPresenting) {
       if (beamGroupRef.current) beamGroupRef.current.visible = false;
-      if (dotRef.current)       dotRef.current.visible = false;
+      if (dotRef.current) dotRef.current.visible = false;
       return;
     }
 
-    const controller = gl.xr.getController(1); // right controller
-    if (!controller) return;
+    const controllerHits: {
+      controller: THREE.Group;
+      position: THREE.Vector3;
+      quaternion: THREE.Quaternion;
+      point: THREE.Vector3 | null;
+      distance: number;
+      action: (() => void) | null;
+    }[] = [];
 
-    const cPos = new THREE.Vector3();
-    const cQuat = new THREE.Quaternion();
-    controller.getWorldPosition(cPos);
-    controller.getWorldQuaternion(cQuat);
-    const rayDir = new THREE.Vector3(0, 0, -1).applyQuaternion(cQuat).normalize();
+    for (let controllerIndex = 0; controllerIndex < 2; controllerIndex += 1) {
+      const controller = gl.xr.getController(controllerIndex);
+      if (!controller) continue;
 
-    if (beamGroupRef.current) {
-      beamGroupRef.current.visible = true;
-      beamGroupRef.current.position.copy(cPos);
-      beamGroupRef.current.quaternion.copy(cQuat);
-    }
+      const cPos = new THREE.Vector3();
+      const cQuat = new THREE.Quaternion();
+      controller.getWorldPosition(cPos);
+      controller.getWorldQuaternion(cQuat);
+      const rayDir = new THREE.Vector3(0, 0, -1).applyQuaternion(cQuat).normalize();
 
-    raycasterRef.current.set(cPos, rayDir);
-    const ray = new THREE.Ray(cPos, rayDir);
-    const aabbTarget = new THREE.Vector3();
+      raycasterRef.current.set(cPos, rayDir);
+      const ray = new THREE.Ray(cPos, rayDir);
+      const aabbTarget = new THREE.Vector3();
 
-    let closestDist = Infinity;
-    let closestPoint: THREE.Vector3 | null = null;
-    hitActionRef.current = null;
+      let closestDist = Infinity;
+      let closestPoint: THREE.Vector3 | null = null;
+      let closestAction: (() => void) | null = null;
 
-    // ── When panel is OPEN: test button meshes via full raycaster (handles Billboard rotation)
-    if (selectedBooth) {
-      const wa = (selectedBooth.whatsapp || '').replace(/\+/g, '');
-      const waLink = `https://api.whatsapp.com/send?phone=${wa}&text=Hello+${encodeURIComponent(selectedBooth.companyName)},+I+am+at+your+virtual+booth.`;
+      // When the info panel is open, test real button meshes so Billboard rotation is handled correctly.
+      if (selectedBooth) {
+        const wa = (selectedBooth.whatsapp || '').replace(/\+/g, '');
+        const waLink = `https://api.whatsapp.com/send?phone=${wa}&text=Hello+${encodeURIComponent(selectedBooth.companyName)},+I+am+at+your+virtual+booth.`;
 
-      const panelButtons: { mesh: THREE.Mesh | null; action: () => void }[] = [
-        // WhatsApp opens in a new Quest browser tab (no inline option for messaging apps)
-        { mesh: whatsappBtnRef.current, action: () => window.open(waLink, '_blank') },
-        // Catalog opens inside VR overlay
-        ...(selectedBooth.catalogUrl
-          ? [{ mesh: catalogBtnRef.current, action: () => onOpenOverlay(selectedBooth.catalogUrl!, `${selectedBooth.companyName} — Catalog`) }]
-          : []),
-        { mesh: closeBtnRef.current,    action: onCloseBooth },
-      ];
+        const panelButtons: { mesh: THREE.Mesh | null; action: () => void }[] = [
+          { mesh: whatsappBtnRef.current, action: () => window.open(waLink, '_blank') },
+          ...(selectedBooth.catalogUrl
+            ? [{ mesh: catalogBtnRef.current, action: () => onOpenOverlay(selectedBooth.catalogUrl!, `${selectedBooth.companyName} — Catalog`) }]
+            : []),
+          { mesh: closeBtnRef.current, action: onCloseBooth },
+        ];
 
-      for (const { mesh, action } of panelButtons) {
-        if (!mesh) continue;
-        const hits = raycasterRef.current.intersectObject(mesh, false);
-        if (hits.length > 0 && hits[0].distance < closestDist) {
-          closestDist = hits[0].distance;
-          closestPoint = hits[0].point.clone();
-          hitActionRef.current = action;
-        }
-      }
-    }
-
-    // ── Always test INFO/link and LCD/video zones in the physical booth.
-    for (const { booth, kind, box } of boothHitZones) {
-      if (ray.intersectBox(box, aabbTarget)) {
-        const dist = cPos.distanceTo(aabbTarget);
-        if (dist < closestDist) {
-          closestDist = dist;
-          closestPoint = aabbTarget.clone();
-          if (kind === 'info') {
-            hitActionRef.current = () => openLinkInNewWindow(booth.websiteUrl);
-          } else if (kind === 'youtube-toggle') {
-            hitActionRef.current = () => onToggleYoutubeVideo(booth);
-          } else if (kind === 'youtube-back') {
-            hitActionRef.current = () => onSeekYoutubeVideo(booth, -30);
-          } else if (kind === 'youtube-forward') {
-            hitActionRef.current = () => onSeekYoutubeVideo(booth, 30);
-          } else {
-            const side: PdfPanelSide = kind.includes('left') ? 'left' : 'right';
-            if (kind.endsWith('prev')) {
-              hitActionRef.current = () => adjustPdfPanel(booth.id, side, -1, 0);
-            } else if (kind.endsWith('next')) {
-              hitActionRef.current = () => adjustPdfPanel(booth.id, side, 1, 0);
-            } else if (kind.endsWith('zoom-out')) {
-              hitActionRef.current = () => adjustPdfPanel(booth.id, side, 0, -20);
-            } else {
-              hitActionRef.current = () => adjustPdfPanel(booth.id, side, 0, 20);
-            }
+        for (const { mesh, action } of panelButtons) {
+          if (!mesh) continue;
+          const hits = raycasterRef.current.intersectObject(mesh, false);
+          if (hits.length > 0 && hits[0].distance < closestDist) {
+            closestDist = hits[0].distance;
+            closestPoint = hits[0].point.clone();
+            closestAction = action;
           }
         }
       }
+
+      for (const { booth, kind, box } of boothHitZones) {
+        if (!ray.intersectBox(box, aabbTarget)) continue;
+
+        const dist = cPos.distanceTo(aabbTarget);
+        if (dist >= closestDist) continue;
+
+        closestDist = dist;
+        closestPoint = aabbTarget.clone();
+        if (kind === 'info') {
+          closestAction = () => openLinkInNewWindow(booth.websiteUrl);
+        } else if (kind === 'youtube-toggle') {
+          closestAction = () => onToggleYoutubeVideo(booth);
+        } else if (kind === 'youtube-back') {
+          closestAction = () => onSeekYoutubeVideo(booth, -30);
+        } else if (kind === 'youtube-forward') {
+          closestAction = () => onSeekYoutubeVideo(booth, 30);
+        } else {
+          const side: PdfPanelSide = kind.includes('left') ? 'left' : 'right';
+          if (kind.endsWith('prev')) {
+            closestAction = () => adjustPdfPanel(booth.id, side, -1, 0);
+          } else if (kind.endsWith('next')) {
+            closestAction = () => adjustPdfPanel(booth.id, side, 1, 0);
+          } else if (kind.endsWith('zoom-out')) {
+            closestAction = () => adjustPdfPanel(booth.id, side, 0, -20);
+          } else {
+            closestAction = () => adjustPdfPanel(booth.id, side, 0, 20);
+          }
+        }
+      }
+
+      controllerHits.push({
+        controller,
+        position: cPos,
+        quaternion: cQuat,
+        point: closestPoint,
+        distance: closestDist,
+        action: closestAction,
+      });
     }
 
-    // Update beam visual
-    const beamLen = Math.min(closestPoint ? closestDist : 10, 14);
-    if (beamMeshRef.current) {
-      beamMeshRef.current.scale.set(1, 1, beamLen);
-      beamMeshRef.current.position.set(0, 0, -beamLen / 2);
-      const mat = beamMeshRef.current.material as THREE.MeshBasicMaterial;
-      mat.color.setHex(closestPoint ? 0x00e5ff : 0xffffff);
-      mat.opacity = closestPoint ? 0.95 : 0.4;
-    }
-    if (dotRef.current) {
-      if (closestPoint) { dotRef.current.visible = true; dotRef.current.position.copy(closestPoint); }
-      else              { dotRef.current.visible = false; }
+    const bestHit =
+      controllerHits
+        .filter((hit) => hit.point && hit.action)
+        .sort((a, b) => a.distance - b.distance)[0] ?? controllerHits[0];
+
+    hitActionRef.current = bestHit?.action ?? null;
+
+    if (bestHit) {
+      const beamLen = Math.min(bestHit.point ? bestHit.distance : 10, 14);
+      if (beamGroupRef.current) {
+        beamGroupRef.current.visible = true;
+        beamGroupRef.current.position.copy(bestHit.position);
+        beamGroupRef.current.quaternion.copy(bestHit.quaternion);
+      }
+      if (beamMeshRef.current) {
+        beamMeshRef.current.scale.set(1, 1, beamLen);
+        beamMeshRef.current.position.set(0, 0, -beamLen / 2);
+        const mat = beamMeshRef.current.material as THREE.MeshBasicMaterial;
+        mat.color.setHex(bestHit.point ? 0x00e5ff : 0xffffff);
+        mat.opacity = bestHit.point ? 0.95 : 0.4;
+      }
+      if (dotRef.current) {
+        if (bestHit.point) {
+          dotRef.current.visible = true;
+          dotRef.current.position.copy(bestHit.point);
+        } else {
+          dotRef.current.visible = false;
+        }
+      }
     }
 
-    // Trigger → fire action
     const session = gl.xr.getSession();
     if (session) {
       let trigDown = false;
       for (const src of session.inputSources) {
-        if (src.handedness === 'right' && src.gamepad) {
-          trigDown = src.gamepad.buttons[0]?.pressed ?? false;
+        if (src.gamepad?.buttons[0]?.pressed) {
+          trigDown = true;
+          break;
         }
       }
       if (trigDown && !triggerWasDown.current && hitActionRef.current) {
@@ -1893,9 +1951,16 @@ function VRBrowserPanel({ url, title, onClose }: { url: string; title: string; o
   const [youtubePlaying, setYoutubePlaying] = useState(true);
   const [youtubeSeconds, setYoutubeSeconds] = useState(0);
   const youtubeIframeRef = useRef<HTMLIFrameElement | null>(null);
+  const pendingYouTubeCommandRef = useRef<YouTubeLCDCommand | null>(null);
+  const [youtubeFrameReady, setYoutubeFrameReady] = useState(false);
   const isVideo = /\.(mp4|webm|ogg)([?#].*)?$/i.test(url);
   const isPdf   = /\.(pdf)([?#].*)?$/i.test(url) || url.includes('drive.google.com');
   const isYouTube = url.includes('youtube.com/embed/');
+
+  useEffect(() => {
+    setYoutubeFrameReady(false);
+    pendingYouTubeCommandRef.current = null;
+  }, [url]);
 
   const sendYouTubeCommand = (func: string, args: unknown[] = []) => {
     youtubeIframeRef.current?.contentWindow?.postMessage(
@@ -1938,6 +2003,10 @@ function VRBrowserPanel({ url, title, onClose }: { url: string; title: string; o
     const handleLCDCommand = (event: Event) => {
       const command = (event as CustomEvent<YouTubeLCDCommand>).detail;
       if (!command) return;
+      if (!youtubeFrameReady) {
+        pendingYouTubeCommandRef.current = command;
+        return;
+      }
 
       if (command.type === 'toggle') {
         toggleYouTubePlayback();
@@ -1948,7 +2017,15 @@ function VRBrowserPanel({ url, title, onClose }: { url: string; title: string; o
 
     window.addEventListener('exhibition-youtube-command', handleLCDCommand);
     return () => window.removeEventListener('exhibition-youtube-command', handleLCDCommand);
-  }, [isYouTube, youtubePlaying, youtubeSeconds]);
+  }, [isYouTube, youtubeFrameReady, youtubePlaying, youtubeSeconds]);
+
+  useEffect(() => {
+    if (!youtubeFrameReady || !pendingYouTubeCommandRef.current) return;
+
+    const command = pendingYouTubeCommandRef.current;
+    pendingYouTubeCommandRef.current = null;
+    window.setTimeout(() => dispatchYouTubeLCDCommand(command), 150);
+  }, [youtubeFrameReady]);
 
   const pdfBaseUrl = url.split('#')[0];
   const pdfViewerUrl = getPdfViewerUrl(pdfBaseUrl, pdfPage, pdfZoom);
@@ -2023,6 +2100,7 @@ function VRBrowserPanel({ url, title, onClose }: { url: string; title: string; o
             title={title}
             allow="autoplay; encrypted-media; picture-in-picture"
             allowFullScreen
+            onLoad={() => setYoutubeFrameReady(true)}
             style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
           />
         </div>
