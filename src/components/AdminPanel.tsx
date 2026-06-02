@@ -51,6 +51,7 @@ export default function AdminPanel({
   const [bWebsite, setBWebsite] = useState('');
   const [bWhatsapp, setBWhatsapp] = useState('');
   const [bVideo, setBVideo] = useState('');
+  const [bCatalog, setBCatalog] = useState('');
   const [bPreset, setBPreset] = useState<'classic' | 'modern' | 'minimalist' | 'futuristic'>('modern');
   const [customModelFilename, setCustomModelFilename] = useState('');
   const [customModelUrl, setCustomModelUrl] = useState('');
@@ -112,6 +113,7 @@ export default function AdminPanel({
     setBWebsite('');
     setBWhatsapp('');
     setBVideo('');
+    setBCatalog('');
     setBPreset('modern');
     setCustomModelFilename('');
     setCustomModelUrl('');
@@ -138,6 +140,7 @@ export default function AdminPanel({
     setBWebsite(booth.websiteUrl || '');
     setBWhatsapp(booth.whatsapp || '');
     setBVideo(booth.videoUrl || '');
+    setBCatalog(booth.catalogUrl || '');
     setBPreset(booth.stylePreset);
     setCustomModelUrl(booth.modelUrl || '');
     setCustomModelFilename(booth.modelUrl ? 'custom_model.glb' : '');
@@ -222,6 +225,7 @@ export default function AdminPanel({
       websiteUrl: bWebsite || 'https://google.com',
       whatsapp: bWhatsapp || '+15550192837',
       videoUrl: bVideo || 'https://www.w3schools.com/html/mov_bbb.mp4',
+      catalogUrl: bCatalog || undefined,
       stylePreset: bPreset,
       modelUrl: customModelUrl,
       modelScale: 1.0,
@@ -721,12 +725,26 @@ export default function AdminPanel({
                     />
                   </div>
                   <div>
-                    <label className="block text-[10px] font-mono text-neutral-450 uppercase mb-1 font-bold">Screen Showroom Video URL</label>
+                    <label className="block text-[10px] font-mono text-neutral-450 uppercase mb-1 font-bold">
+                      LCD Screen Video URL <span className="text-neutral-400 normal-case">(MP4 — پخش روی صفحه غرفه)</span>
+                    </label>
                     <input
                       type="url"
                       value={bVideo}
                       onChange={(e) => setBVideo(e.target.value)}
-                      placeholder="e.g. https://www.w3schools.com/html/movie.mp4"
+                      placeholder="https://example.com/video.mp4"
+                      className="w-full bg-white border border-[#E0E4E8] rounded p-2 text-[#1A1D21] focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-mono text-neutral-450 uppercase mb-1 font-bold">
+                      Catalog URL <span className="text-neutral-400 normal-case">(PDF یا لینک — نمایش در VR Browser)</span>
+                    </label>
+                    <input
+                      type="url"
+                      value={bCatalog}
+                      onChange={(e) => setBCatalog(e.target.value)}
+                      placeholder="https://example.com/catalog.pdf"
                       className="w-full bg-white border border-[#E0E4E8] rounded p-2 text-[#1A1D21] focus:outline-none"
                     />
                   </div>

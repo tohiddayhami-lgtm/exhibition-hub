@@ -29,7 +29,8 @@ export interface Booth {
   productImageUrl: string; // Featured product image
   websiteUrl: string;
   whatsapp: string; // Phone number for chat
-  videoUrl: string; // Mock or real MP4/YouTube
+  videoUrl: string; // Direct MP4 URL played on the in-booth LCD screen
+  catalogUrl?: string; // PDF or web URL shown in VR overlay browser
   stylePreset: 'classic' | 'modern' | 'minimalist' | 'futuristic';
   modelUrl?: string; // Optional custom loaded GLB/GLTF file URL
   modelScale?: number; // Scale multiplier for GLB

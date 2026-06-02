@@ -1,4 +1,5 @@
-import React, { useRef, useEffect, useState, Suspense, useMemo } from 'react';
+import React, { useRef, useEffect, useState, Suspense, useMemo, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, Html, useGLTF, PointerLockControls, Text, Billboard } from '@react-three/drei';
 import * as THREE from 'three';
@@ -19,7 +20,10 @@ type XRSystemLike = {
   isSessionSupported: (mode: typeof VR_SESSION_MODE) => Promise<boolean>;
   requestSession: (
     mode: typeof VR_SESSION_MODE,
-    options?: { optionalFeatures?: string[] }
+    options?: {
+      optionalFeatures?: string[];
+      domOverlay?: { root: Element };
+    }
   ) => Promise<XRSessionLike>;
 };
 
@@ -187,6 +191,83 @@ function GroundPlane({ hall, onFloorClick, teleportTarget }: {
           <meshBasicMaterial color="#38bdf8" side={THREE.DoubleSide} transparent opacity={0.9} />
         </mesh>
       )}
+    </group>
+  );
+}
+
+// In-booth LCD screen — shows video texture or product image on the back wall
+function VideoLCDScreen({ booth }: { booth: Booth }) {
+  const [videoTex, setVideoTex] = useState<THREE.VideoTexture | null>(null);
+  const [imgTex, setImgTex]     = useState<THREE.Texture | null>(null);
+  const videoElRef = useRef<HTMLVideoElement | null>(null);
+
+  // Video texture — muted autoplay so it works without user interaction
+  useEffect(() => {
+    if (!booth.videoUrl) return;
+    const v = document.createElement('video');
+    v.src = booth.videoUrl;
+    v.crossOrigin = 'anonymous';
+    v.loop = true;
+    v.muted = true;
+    v.playsInline = true;
+    v.autoplay = true;
+    const tex = new THREE.VideoTexture(v);
+    tex.minFilter = THREE.LinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+    v.play().catch(() => {});
+    videoElRef.current = v;
+    setVideoTex(tex);
+    return () => { v.pause(); v.src = ''; tex.dispose(); setVideoTex(null); };
+  }, [booth.videoUrl]);
+
+  // Static image texture fallback
+  useEffect(() => {
+    if (booth.videoUrl || !booth.productImageUrl) return;
+    const loader = new THREE.TextureLoader();
+    loader.crossOrigin = 'anonymous';
+    loader.load(booth.productImageUrl, t => setImgTex(t), undefined, () => {});
+    return () => { imgTex?.dispose(); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [booth.productImageUrl, booth.videoUrl]);
+
+  const togglePlay = () => {
+    const v = videoElRef.current;
+    if (!v) return;
+    v.paused ? v.play().catch(() => {}) : v.pause();
+  };
+
+  const screenW = Math.min(booth.width * 0.72, 3.2);
+  const screenH = screenW * (9 / 16);
+  // Position: centred on back wall, sitting above the inner graphic panel
+  const posY = booth.height * 0.42;
+
+  return (
+    <group position={[0, posY, -booth.depth / 2 + 0.22]}>
+      {/* Physical bezel */}
+      <mesh>
+        <boxGeometry args={[screenW + 0.1, screenH + 0.08, 0.06]} />
+        <meshStandardMaterial color="#0a0a0a" roughness={0.1} metalness={0.95} />
+      </mesh>
+      {/* Screen surface — click to toggle play */}
+      <mesh position={[0, 0, 0.04]} onClick={togglePlay}>
+        <planeGeometry args={[screenW, screenH]} />
+        {videoTex ? (
+          <meshBasicMaterial map={videoTex} toneMapped={false} />
+        ) : imgTex ? (
+          <meshBasicMaterial map={imgTex} />
+        ) : (
+          <meshStandardMaterial
+            color="#0d1117"
+            emissive={booth.themeColor || '#1a2744'}
+            emissiveIntensity={0.12}
+          />
+        )}
+      </mesh>
+      {/* LED edge accent */}
+      <mesh position={[0, 0, -0.01]}>
+        <planeGeometry args={[screenW + 0.06, screenH + 0.05]} />
+        <meshBasicMaterial color={booth.themeColor || '#334155'} transparent opacity={0.2} />
+      </mesh>
     </group>
   );
 }
@@ -404,7 +485,10 @@ function BoothStructure({
         </Text>
       </group>
 
-      {/* 7. PRODUCT DISPLAY */}
+      {/* 7. LCD SCREEN — video/image texture on back wall */}
+      <VideoLCDScreen booth={booth} />
+
+      {/* 8. PRODUCT DISPLAY */}
       <group position={[0, 0.05, 0]}>
         {booth.modelUrl ? (
           <Suspense fallback={<PlaceholderProductStyle themeColor={col} style={booth.stylePreset} />}>
@@ -630,11 +714,13 @@ function XRInteractionSystem({
   selectedBooth,
   onSelectBooth,
   onCloseBooth,
+  onOpenOverlay,
 }: {
   booths: Booth[];
   selectedBooth: Booth | null;
   onSelectBooth: (booth: Booth) => void;
   onCloseBooth: () => void;
+  onOpenOverlay: (url: string, title: string) => void;
 }) {
   const { gl } = useThree();
 
@@ -646,6 +732,7 @@ function XRInteractionSystem({
   // Panel interactive button mesh refs (world-space, Billboard-rotated)
   const websiteBtnRef   = useRef<THREE.Mesh>(null);
   const whatsappBtnRef  = useRef<THREE.Mesh>(null);
+  const catalogBtnRef   = useRef<THREE.Mesh>(null);
   const closeBtnRef     = useRef<THREE.Mesh>(null);
 
   const triggerWasDown  = useRef(false);
@@ -700,8 +787,14 @@ function XRInteractionSystem({
       const waLink = `https://api.whatsapp.com/send?phone=${wa}&text=Hello+${encodeURIComponent(selectedBooth.companyName)},+I+am+at+your+virtual+booth.`;
 
       const panelButtons: { mesh: THREE.Mesh | null; action: () => void }[] = [
-        { mesh: websiteBtnRef.current,  action: () => window.open(selectedBooth.websiteUrl || '#', '_blank') },
+        // Open website inside VR overlay instead of window.open
+        { mesh: websiteBtnRef.current,  action: () => onOpenOverlay(selectedBooth.websiteUrl || 'https://example.com', selectedBooth.companyName) },
+        // WhatsApp opens in a new Quest browser tab (no inline option for messaging apps)
         { mesh: whatsappBtnRef.current, action: () => window.open(waLink, '_blank') },
+        // Catalog opens inside VR overlay
+        ...(selectedBooth.catalogUrl
+          ? [{ mesh: catalogBtnRef.current, action: () => onOpenOverlay(selectedBooth.catalogUrl!, `${selectedBooth.companyName} — Catalog`) }]
+          : []),
         { mesh: closeBtnRef.current,    action: onCloseBooth },
       ];
 
@@ -854,14 +947,27 @@ function XRInteractionSystem({
             {(booth.description || 'Welcome to our virtual exhibition stand. We are happy to connect with you.').substring(0, 200)}
           </Text>
 
-          {/* ── WEBSITE BUTTON */}
-          <mesh ref={websiteBtnRef} position={[-0.6, -PH / 2 + 0.3, 0.01]}>
-            <planeGeometry args={[0.92, 0.38]} />
+          {/* ── WEBSITE BUTTON (opens inside VR overlay) */}
+          <mesh ref={websiteBtnRef} position={[booth.catalogUrl ? -1.0 : -0.6, -PH / 2 + 0.3, 0.01]}>
+            <planeGeometry args={[booth.catalogUrl ? 0.6 : 0.92, 0.38]} />
             <meshStandardMaterial color="#1d4ed8" emissive="#1d4ed8" emissiveIntensity={0.4} roughness={0.05} metalness={0.7} />
           </mesh>
-          <Text position={[-0.6, -PH / 2 + 0.3, 0.018]} fontSize={0.105} color="white" anchorX="center" anchorY="middle" outlineWidth={0.003} outlineColor="#000">
-            Visit Website
+          <Text position={[booth.catalogUrl ? -1.0 : -0.6, -PH / 2 + 0.3, 0.018]} fontSize={0.095} color="white" anchorX="center" anchorY="middle" outlineWidth={0.003} outlineColor="#000">
+            Website
           </Text>
+
+          {/* ── CATALOG BUTTON (only if catalogUrl exists) */}
+          {booth.catalogUrl && (
+            <>
+              <mesh ref={catalogBtnRef} position={[-0.3, -PH / 2 + 0.3, 0.01]}>
+                <planeGeometry args={[0.6, 0.38]} />
+                <meshStandardMaterial color="#7c3aed" emissive="#7c3aed" emissiveIntensity={0.4} roughness={0.05} metalness={0.7} />
+              </mesh>
+              <Text position={[-0.3, -PH / 2 + 0.3, 0.018]} fontSize={0.095} color="white" anchorX="center" anchorY="middle" outlineWidth={0.003} outlineColor="#000">
+                Catalog
+              </Text>
+            </>
+          )}
 
           {/* ── WHATSAPP BUTTON */}
           <mesh ref={whatsappBtnRef} position={[0.6, -PH / 2 + 0.3, 0.01]}>
@@ -869,7 +975,7 @@ function XRInteractionSystem({
             <meshStandardMaterial color="#15803d" emissive="#15803d" emissiveIntensity={0.4} roughness={0.05} metalness={0.7} />
           </mesh>
           <Text position={[0.6, -PH / 2 + 0.3, 0.018]} fontSize={0.105} color="white" anchorX="center" anchorY="middle" outlineWidth={0.003} outlineColor="#000">
-            WhatsApp Chat
+            WhatsApp
           </Text>
 
         </Billboard>
@@ -995,6 +1101,7 @@ function HumanPOVXRButton({
   setTeleportTarget,
   xrActive,
   setXrActive,
+  overlayRef,
 }: {
   visitorPos: [number, number, number];
   povEnabled: boolean;
@@ -1002,6 +1109,7 @@ function HumanPOVXRButton({
   setTeleportTarget: (pos: [number, number, number] | null) => void;
   xrActive: boolean;
   setXrActive: (active: boolean) => void;
+  overlayRef: React.RefObject<HTMLDivElement | null>;
 }) {
   const { gl, camera } = useThree();
   const [xrSupported, setXrSupported] = useState(false);
@@ -1078,8 +1186,13 @@ function HumanPOVXRButton({
       gl.xr.enabled = true;
       gl.xr.setReferenceSpaceType('local-floor');
 
+      const optFeatures = ['local-floor', 'bounded-floor', 'hand-tracking'];
+      const overlayEl = overlayRef.current;
+      if (overlayEl) optFeatures.push('dom-overlay');
+
       const session = await xr.requestSession(VR_SESSION_MODE, {
-        optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking']
+        optionalFeatures: optFeatures,
+        ...(overlayEl ? { domOverlay: { root: overlayEl } } : {}),
       });
 
       const handleSessionEnd = () => {
@@ -1123,6 +1236,131 @@ function HumanPOVXRButton({
   );
 }
 
+// ── VR Browser Panel — rendered into DOM overlay; visible as 2D layer inside Quest 3 headset
+function VRBrowserPanel({ url, title, onClose }: { url: string; title: string; onClose: () => void }) {
+  const [iframeError, setIframeError] = useState(false);
+  const isVideo = /\.(mp4|webm|ogg)(\?|$)/i.test(url);
+  const isPdf   = /\.(pdf)(\?|$)/i.test(url) || url.includes('drive.google.com');
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 99999,
+      display: 'flex', flexDirection: 'column',
+      background: 'rgba(8,9,13,0.97)',
+      fontFamily: 'system-ui, sans-serif',
+    }}>
+      {/* Header bar */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 12,
+        padding: '10px 16px', background: '#0d111a',
+        borderBottom: '1px solid #1e2a3a', flexShrink: 0,
+      }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <p style={{ margin: 0, fontSize: 10, color: '#64748b', fontFamily: 'monospace', textTransform: 'uppercase', letterSpacing: 2 }}>
+            VR Browser
+          </p>
+          <p style={{ margin: 0, fontSize: 13, fontWeight: 700, color: '#e2e8f0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {title}
+          </p>
+        </div>
+        <a
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            padding: '6px 14px', background: '#1e2a3a', color: '#94a3b8',
+            borderRadius: 6, fontSize: 11, fontFamily: 'monospace',
+            textDecoration: 'none', border: '1px solid #2d3f55',
+          }}
+        >
+          Open Tab ↗
+        </a>
+        <button
+          onClick={onClose}
+          style={{
+            width: 36, height: 36, borderRadius: 8,
+            background: '#7f1d1d', border: 'none', color: '#fca5a5',
+            fontSize: 18, cursor: 'pointer', display: 'flex',
+            alignItems: 'center', justifyContent: 'center',
+          }}
+        >
+          ✕
+        </button>
+      </div>
+
+      {/* URL bar */}
+      <div style={{
+        padding: '8px 16px', background: '#0a0e18',
+        borderBottom: '1px solid #1e2a3a', flexShrink: 0,
+      }}>
+        <div style={{
+          background: '#141824', border: '1px solid #1e2a3a', borderRadius: 6,
+          padding: '6px 12px', color: '#64748b', fontSize: 11,
+          fontFamily: 'monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        }}>
+          {url}
+        </div>
+      </div>
+
+      {/* Content area */}
+      <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+        {isVideo ? (
+          <video
+            src={url}
+            controls
+            autoPlay
+            style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#000' }}
+          />
+        ) : (
+          <>
+            {!iframeError ? (
+              <iframe
+                src={url}
+                title={title}
+                style={{ width: '100%', height: '100%', border: 'none', background: '#fff' }}
+                sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox"
+                onError={() => setIframeError(true)}
+              />
+            ) : (
+              <div style={{
+                display: 'flex', flexDirection: 'column', alignItems: 'center',
+                justifyContent: 'center', height: '100%', gap: 16, color: '#94a3b8',
+              }}>
+                <div style={{ fontSize: 40 }}>🔒</div>
+                <p style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>
+                  این سایت اجازه نمایش در iframe را نمی‌دهد
+                </p>
+                <a
+                  href={url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{
+                    padding: '10px 24px', background: '#0ea5e9', color: '#fff',
+                    borderRadius: 8, textDecoration: 'none', fontSize: 13, fontWeight: 600,
+                  }}
+                >
+                  باز کردن در مرورگر ↗
+                </a>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Footer hint */}
+      {!isVideo && (
+        <div style={{
+          padding: '8px 16px', background: '#0a0e18',
+          borderTop: '1px solid #1e2a3a', fontSize: 10,
+          color: '#334155', fontFamily: 'monospace', textAlign: 'center', flexShrink: 0,
+        }}>
+          {isPdf ? 'PDF Catalog Viewer' : 'اگر صفحه لود نشد از دکمه "Open Tab" استفاده کنید'}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function ExhibitionCanvas({
   hall,
   booths,
@@ -1135,6 +1373,16 @@ export default function ExhibitionCanvas({
   const [teleportTarget, setTeleportTarget] = useState<[number, number, number] | null>(null);
   const [povEnabled, setPovEnabled] = useState(false);
   const [xrActive, setXrActive] = useState(false);
+
+  // VR Browser Overlay state
+  const vrOverlayRef  = useRef<HTMLDivElement | null>(null);
+  const [vrOverlayUrl, setVrOverlayUrl]   = useState<string | null>(null);
+  const [vrOverlayTitle, setVrOverlayTitle] = useState('');
+
+  const handleOpenOverlay = useCallback((url: string, title: string) => {
+    setVrOverlayUrl(url);
+    setVrOverlayTitle(title);
+  }, []);
 
   // Walk on floor click trigger
   const handleFloorClick = (point: THREE.Vector3) => {
@@ -1165,6 +1413,18 @@ export default function ExhibitionCanvas({
 
   return (
     <div id="exhibition-render-container" className="w-full h-full relative bg-neutral-950">
+
+      {/* ── VR DOM Overlay root — must stay in the DOM at all times so Quest 3 can reference it.
+           Content is injected via React portal when vrOverlayUrl is set. */}
+      <div ref={vrOverlayRef} id="xr-dom-overlay" style={{ display: 'contents' }} />
+      {vrOverlayUrl && vrOverlayRef.current && createPortal(
+        <VRBrowserPanel
+          url={vrOverlayUrl}
+          title={vrOverlayTitle}
+          onClose={() => setVrOverlayUrl(null)}
+        />,
+        vrOverlayRef.current
+      )}
       <Canvas
         shadows
         camera={{ position: [0, 8, 16], fov: 50 }}
@@ -1256,6 +1516,7 @@ export default function ExhibitionCanvas({
           setTeleportTarget={setTeleportTarget}
           xrActive={xrActive}
           setXrActive={setXrActive}
+          overlayRef={vrOverlayRef}
         />
 
         {/* Quest 3: left stick walk + right stick snap turn */}
@@ -1266,13 +1527,14 @@ export default function ExhibitionCanvas({
           />
         )}
 
-        {/* Quest 3: right-controller ray + in-world info panel (replaces DOM modal in VR) */}
+        {/* Quest 3: right-controller ray + in-world info panel + VR overlay browser */}
         {xrActive && (
           <XRInteractionSystem
             booths={booths}
             selectedBooth={activeBoothId ? (booths.find(b => b.id === activeBoothId) ?? null) : null}
             onSelectBooth={onSelectBooth}
             onCloseBooth={onCloseBooth}
+            onOpenOverlay={handleOpenOverlay}
           />
         )}
 
