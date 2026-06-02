@@ -53,6 +53,7 @@ function HallLoadingScreen({ name }: { name: string }) {
 export default function App() {
   const [appView, setAppView] = useState<'selecting' | 'inside-hall'>('selecting');
   const [halls, setHalls] = useState<Hall[]>([]);
+  const [hallsLoading, setHallsLoading] = useState(true); // true until first Firebase snapshot
   const [selectedHallId, setSelectedHallId] = useState<string | null>(null);
   const [showBuilderLogin, setShowBuilderLogin] = useState(false);
 
@@ -76,14 +77,22 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // Always load all halls collection
+  // Load all halls — set hallsLoading=false after first snapshot so we never flash defaults
   useEffect(() => {
     const ref = collection(db, 'halls');
-    const unsub = onSnapshot(ref, (snap) => {
-      const loaded: Hall[] = [];
-      snap.forEach(d => loaded.push(d.data() as Hall));
-      setHalls(loaded);
-    }, () => setHalls([]));
+    const unsub = onSnapshot(
+      ref,
+      (snap) => {
+        const loaded: Hall[] = [];
+        snap.forEach(d => loaded.push(d.data() as Hall));
+        setHalls(loaded);
+        setHallsLoading(false);
+      },
+      () => {
+        setHalls([]);
+        setHallsLoading(false);
+      }
+    );
     return unsub;
   }, []);
 
@@ -206,16 +215,26 @@ export default function App() {
   // Hall selection screen
   if (appView === 'selecting') {
     return (
-      <HallSelection
-        halls={halls.length > 0 ? halls : DEFAULT_HALLS}
-        onEnterHall={handleEnterHall}
-        onCreateHall={handleCreateHall}
-        onLoadDemo={handleLoadDemo}
-        user={user}
-        onSignIn={handleSignIn}
-        onSignOut={handleSignOut}
-        isAuthLoading={isAuthLoading}
-      />
+      <>
+        <HallSelection
+          halls={halls}                          // only real Firebase data — no flash of defaults
+          isLoading={hallsLoading}               // show spinner until first snapshot arrives
+          onEnterHall={handleEnterHall}
+          onCreateHall={handleCreateHall}
+          onLoadDemo={handleLoadDemo}
+          user={user}
+          onSignIn={() => setShowBuilderLogin(true)}  // email/password modal, same as inside-hall
+          onSignOut={handleSignOut}
+          isAuthLoading={isAuthLoading}
+        />
+
+        {/* Builder login works on the landing page too */}
+        <BuilderLoginModal
+          isOpen={showBuilderLogin}
+          onClose={() => setShowBuilderLogin(false)}
+          onSuccess={() => setShowBuilderLogin(false)}
+        />
+      </>
     );
   }
 

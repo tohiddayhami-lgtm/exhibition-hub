@@ -5,6 +5,7 @@ import { Building2, ArrowRight, Plus, LogIn, LogOut, Loader2 } from 'lucide-reac
 
 interface HallSelectionProps {
   halls: Hall[];
+  isLoading?: boolean;
   onEnterHall: (hall: Hall) => void;
   onCreateHall: (name: string, description: string) => Promise<void>;
   onLoadDemo: () => Promise<void>;
@@ -16,6 +17,7 @@ interface HallSelectionProps {
 
 export default function HallSelection({
   halls,
+  isLoading = false,
   onEnterHall,
   onCreateHall,
   onLoadDemo,
@@ -145,8 +147,16 @@ export default function HallSelection({
         </div>
 
         <div className="max-w-5xl mx-auto">
-          {halls.length === 0 ? (
-            /* Empty state */
+          {isLoading ? (
+            /* Loading — wait for Firebase, never flash default data */
+            <div className="flex flex-col items-center justify-center py-32 gap-4">
+              <Loader2 className="w-10 h-10 animate-spin" style={{ color: '#4a7fa5' }} />
+              <p className="text-xs font-mono tracking-widest" style={{ color: '#2d3748' }}>
+                Loading halls…
+              </p>
+            </div>
+          ) : halls.length === 0 ? (
+            /* Empty state — only shown after Firebase confirms no halls exist */
             <div
               className="text-center py-20 rounded-xl border"
               style={{ borderColor: 'rgba(255,255,255,0.06)', background: 'rgba(255,255,255,0.02)' }}
@@ -156,9 +166,11 @@ export default function HallSelection({
                 No exhibition halls yet
               </p>
               <p className="text-xs font-mono mb-6" style={{ color: '#2d3748' }}>
-                Create a new hall or load demo data to get started
+                {user
+                  ? 'Create a new hall or load demo data to get started'
+                  : 'Sign in as admin to create and manage halls'}
               </p>
-              {user && (
+              {user ? (
                 <div className="flex items-center justify-center gap-3">
                   <button
                     onClick={() => setShowCreateForm(true)}
@@ -178,6 +190,15 @@ export default function HallSelection({
                     Load Demo Halls
                   </button>
                 </div>
+              ) : (
+                <button
+                  onClick={onSignIn}
+                  className="flex items-center gap-1.5 px-5 py-2.5 rounded-md text-xs font-semibold transition-all cursor-pointer mx-auto"
+                  style={{ background: 'rgba(99,179,237,0.12)', color: '#90cdf4', border: '1px solid rgba(99,179,237,0.3)' }}
+                >
+                  <LogIn className="w-3.5 h-3.5" />
+                  Sign In as Admin
+                </button>
               )}
             </div>
           ) : (
