@@ -1,10 +1,9 @@
 {
-  "projectId": "calculator-55611",
-  "appId": "1:62112615270:web:090d2dc4e6b234c3e3d6a7",
-  "apiKey": "AIzaSyBF11zbII9hRPHPaQBpQcnvCvxVdbgJv7c",
-  "authDomain": "calculator-55611.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-bc94ab67-ce6b-4a28-9c64-1519e1f33c46",
-  "storageBucket": "calculator-55611.firebasestorage.app",
-  "messagingSenderId": "62112615270",
-  "measurementId": ""
+  "apiKey": "AIzaSyD2WptctVMEcMkgUTIsau3T09xJZs9ptxQ",
+  "authDomain": "exhibition-hub-70b7c.firebaseapp.com",
+  "projectId": "exhibition-hub-70b7c",
+  "storageBucket": "exhibition-hub-70b7c.firebasestorage.app",
+  "messagingSenderId": "1037765528615",
+  "appId": "1:1037765528615:web:37969819151181c343d202",
+  "measurementId": "G-9KTQGEDMTG"
 }

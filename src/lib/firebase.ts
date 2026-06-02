@@ -1,11 +1,19 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
+import { getAuth, GoogleAuthProvider } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
+import { getAnalytics } from 'firebase/analytics';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
-export const auth = getAuth();
+
+// Analytics (only in browser, not SSR)
+if (typeof window !== 'undefined') {
+  try { getAnalytics(app); } catch { /* analytics may be blocked by ad-blockers */ }
+}
+
+// Use default Firestore database for this project
+export const db = getFirestore(app);
+export const auth = getAuth(app);
 export const googleAuthProvider = new GoogleAuthProvider();
 
 export enum OperationType {
@@ -29,30 +37,34 @@ export interface FirestoreErrorInfo {
   };
 }
 
-export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null): never {
+export function handleFirestoreError(
+  error: unknown,
+  operationType: OperationType,
+  path: string | null
+): never {
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
-      userId: auth.currentUser?.uid || null,
-      email: auth.currentUser?.email || null,
-      emailVerified: auth.currentUser?.emailVerified || null,
-      isAnonymous: auth.currentUser?.isAnonymous || null,
+      userId: auth.currentUser?.uid ?? null,
+      email: auth.currentUser?.email ?? null,
+      emailVerified: auth.currentUser?.emailVerified ?? null,
+      isAnonymous: auth.currentUser?.isAnonymous ?? null,
     },
     operationType,
     path,
   };
-  console.error('Firestore Error details: ', JSON.stringify(errInfo));
+  console.error('Firestore Error:', JSON.stringify(errInfo));
   throw new Error(JSON.stringify(errInfo));
 }
 
-// Simple test of Firestore connection as requested by the firebase skill
 export async function testConnection() {
   try {
     const { doc, getDocFromServer } = await import('firebase/firestore');
-    await getDocFromServer(doc(db, 'test', 'connection'));
+    await getDocFromServer(doc(db, '_ping', 'test'));
+    console.info('Firebase connection OK — project: exhibition-hub-70b7c');
   } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.error("Please check your Firebase configuration or network status.");
+    if (error instanceof Error && error.message.includes('offline')) {
+      console.error('Firebase offline — check network or config.');
     }
   }
 }
