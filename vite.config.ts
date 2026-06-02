@@ -16,13 +16,16 @@ export default defineConfig(() => {
       watch: process.env.DISABLE_HMR === 'true' ? null : {},
     },
     build: {
-      chunkSizeWarningLimit: 700,
+      chunkSizeWarningLimit: 1100,
       rollupOptions: {
         output: {
+          // Only split truly independent heavy libraries.
+          // Do NOT split React or create a catch-all vendor chunk —
+          // that pattern creates circular dependencies and breaks initialisation order.
           manualChunks(id) {
             if (!id.includes('node_modules')) return undefined;
 
-            // Three.js ecosystem — only downloaded when the user enters a hall
+            // Three.js ecosystem — 1 MB, only needed inside a hall
             if (
               id.includes('/three/') ||
               id.includes('@react-three/fiber') ||
@@ -32,21 +35,14 @@ export default defineConfig(() => {
               id.includes('bidi-js')
             ) return 'chunk-3d';
 
-            // Firebase: split auth (small, needed on landing) from data SDK (heavy)
-            if (id.includes('firebase/auth') || id.includes('@firebase/auth'))
-              return 'chunk-firebase-auth';
-            if (id.includes('firebase') || id.includes('@firebase'))
-              return 'chunk-firebase-data';
+            // Firebase — heavy but needed on the landing page for auth
+            if (id.includes('firebase') || id.includes('@firebase')) {
+              return 'chunk-firebase';
+            }
 
-            // Animation runtime
-            if (id.includes('motion') || id.includes('framer-motion'))
-              return 'chunk-motion';
-
-            // React stays in the main entry for fast hydration
-            if (id.includes('/react/') || id.includes('/react-dom/'))
-              return 'chunk-react';
-
-            return 'chunk-vendor';
+            // Everything else (React, lucide, motion, etc.) stays together
+            // in the default entry chunk to avoid cross-chunk circular deps.
+            return undefined;
           },
         },
       },
