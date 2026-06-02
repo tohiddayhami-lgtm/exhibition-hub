@@ -464,6 +464,12 @@ function BoothStructure({
   );
 }
 
+// Memoised — only re-renders when this booth's data or active state changes.
+// With 100 booths, without memo every camera/visitor move would re-render all 100.
+const MemoBoothStructure = React.memo(BoothStructure, (prev, next) =>
+  prev.active === next.active && prev.booth === next.booth
+);
+
 // Frame core to handle smoothly interpolating camera and controls states
 function SceneCameraController({ visitorPos, teleportTarget, setTeleportTarget, povEnabled }: {
   visitorPos: [number, number, number];
@@ -1159,10 +1165,16 @@ export default function ExhibitionCanvas({
 
   return (
     <div id="exhibition-render-container" className="w-full h-full relative bg-neutral-950">
-      <Canvas 
+      <Canvas
         shadows
         camera={{ position: [0, 8, 16], fov: 50 }}
         className="w-full h-full"
+        // Adaptive DPR: cap at 1.5× so mobile/Quest doesn't over-render
+        dpr={[1, 1.5]}
+        // Adaptive performance: automatically lowers resolution if fps drops
+        performance={{ min: 0.5 }}
+        // Prefer high-performance GPU on dual-GPU laptops/tablets
+        gl={{ antialias: true, powerPreference: 'high-performance' }}
       >
         <color attach="background" args={['#12151a']} />
 
@@ -1178,13 +1190,14 @@ export default function ExhibitionCanvas({
           position={[0, 18, 6]}
           intensity={3.5}
           color="#ffffff"
-          shadow-mapSize-width={2048}
-          shadow-mapSize-height={2048}
+          shadow-mapSize-width={1024}
+          shadow-mapSize-height={1024}
           shadow-camera-far={50}
           shadow-camera-left={-25}
           shadow-camera-right={25}
           shadow-camera-top={25}
           shadow-camera-bottom={-25}
+          shadow-bias={-0.0005}
         />
 
         {/* Front-fill directional to eliminate harsh back-shadows on booth faces */}
@@ -1210,13 +1223,13 @@ export default function ExhibitionCanvas({
           <IndustrialCeiling hall={hall} />
           <ExhibitionWall hall={hall} />
 
-          {/* Symmetrical positioned trade stalls */}
+          {/* Symmetrical positioned trade stalls — memoised to skip re-renders */}
           {booths.map((booth) => (
-            <BoothStructure 
-              key={booth.id} 
-              booth={booth} 
-              active={activeBoothId === booth.id} 
-              onSelect={() => onSelectBooth(booth)} 
+            <MemoBoothStructure
+              key={booth.id}
+              booth={booth}
+              active={activeBoothId === booth.id}
+              onSelect={() => onSelectBooth(booth)}
             />
           ))}
         </Suspense>

@@ -1,6 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, lazy, Suspense, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Canvas } from '@react-three/fiber';
 import {
   Building,
   Building2,
@@ -18,7 +17,8 @@ import {
   Tv,
   Box,
   CornerDownRight,
-  ChevronLeft
+  ChevronLeft,
+  Loader2
 } from 'lucide-react';
 
 import { Hall, Booth } from './types';
@@ -27,12 +27,27 @@ import { db, auth, googleAuthProvider, handleFirestoreError, OperationType } fro
 import { onAuthStateChanged, signInWithPopup, signOut, User } from 'firebase/auth';
 import { doc, setDoc, collection, onSnapshot } from 'firebase/firestore';
 
-// Component Imports
-import ExhibitionCanvas from './components/ExhibitionCanvas';
-import VisitorControls from './components/VisitorControls';
-import AdminPanel from './components/AdminPanel';
-import BoothModal from './components/BoothModal';
+// Lightweight components — loaded immediately
 import HallSelection from './components/HallSelection';
+import VisitorControls from './components/VisitorControls';
+
+// Heavy 3D components — lazy loaded only when user enters a hall
+// This keeps the landing page bundle tiny (no Three.js on initial load)
+const ExhibitionCanvas = lazy(() => import('./components/ExhibitionCanvas'));
+const AdminPanel       = lazy(() => import('./components/AdminPanel'));
+const BoothModal       = lazy(() => import('./components/BoothModal'));
+
+// Shown while 3D scene is initialising (covers the full hall view)
+function HallLoadingScreen({ name }: { name: string }) {
+  return (
+    <div className="fixed inset-0 bg-[#08090d] flex flex-col items-center justify-center gap-4 z-50">
+      <Loader2 className="w-10 h-10 text-cyan-400 animate-spin" />
+      <p className="text-white font-mono text-sm tracking-widest uppercase opacity-70">
+        Loading {name}…
+      </p>
+    </div>
+  );
+}
 
 export default function App() {
   const [appView, setAppView] = useState<'selecting' | 'inside-hall'>('selecting');
@@ -180,11 +195,11 @@ export default function App() {
     }
   };
 
-  // Select/Click booth helper
-  const handleSelectBooth = (booth: Booth) => {
+  // Stable reference — prevents MemoBoothStructure from re-rendering on every visitor move
+  const handleSelectBooth = useCallback((booth: Booth) => {
     setSelectedBooth(booth);
     setActiveBoothId(booth.id);
-  };
+  }, []);
 
   // Hall selection screen
   if (appView === 'selecting') {
@@ -336,14 +351,16 @@ export default function App() {
                 </div>
               )}
               <div className="flex-1 overflow-hidden">
-                <AdminPanel
-                  hall={hall}
-                  booths={booths}
-                  onUpdateHall={setHall}
-                  onUpdateBooths={setBooths}
-                  onSelectBooth={handleSelectBooth}
-                  onAddSampleData={handleInitializeDemoData}
-                />
+                <Suspense fallback={<div className="flex items-center justify-center h-full"><Loader2 className="w-6 h-6 text-neutral-400 animate-spin" /></div>}>
+                  <AdminPanel
+                    hall={hall}
+                    booths={booths}
+                    onUpdateHall={setHall}
+                    onUpdateBooths={setBooths}
+                    onSelectBooth={handleSelectBooth}
+                    onAddSampleData={handleInitializeDemoData}
+                  />
+                </Suspense>
               </div>
             </div>
           )}
@@ -379,28 +396,32 @@ export default function App() {
           </div>
         </div>
 
-        {/* Real-time 3D Exhibition Canvas */}
+        {/* Real-time 3D Exhibition Canvas — lazy loaded (Three.js not downloaded until here) */}
         <div className="w-full h-full flex-1 relative">
-          <ExhibitionCanvas
-            hall={hall}
-            booths={booths}
-            activeBoothId={activeBoothId}
-            onSelectBooth={handleSelectBooth}
-            onCloseBooth={() => { setActiveBoothId(null); setSelectedBooth(null); }}
-            visitorPos={visitorPos}
-            setVisitorPos={setVisitorPos}
-          />
+          <Suspense fallback={<HallLoadingScreen name={hall.name} />}>
+            <ExhibitionCanvas
+              hall={hall}
+              booths={booths}
+              activeBoothId={activeBoothId}
+              onSelectBooth={handleSelectBooth}
+              onCloseBooth={() => { setActiveBoothId(null); setSelectedBooth(null); }}
+              visitorPos={visitorPos}
+              setVisitorPos={setVisitorPos}
+            />
+          </Suspense>
         </div>
 
-        {/* Immersive Selected Booth Information Modal Sidebar */}
-        <BoothModal
-          booth={selectedBooth}
-          isOpen={activeBoothId !== null}
-          onClose={() => {
-            setActiveBoothId(null);
-            setSelectedBooth(null);
-          }}
-        />
+        {/* Booth Information Modal — lazy loaded */}
+        <Suspense fallback={null}>
+          <BoothModal
+            booth={selectedBooth}
+            isOpen={activeBoothId !== null}
+            onClose={() => {
+              setActiveBoothId(null);
+              setSelectedBooth(null);
+            }}
+          />
+        </Suspense>
       </main>
     </div>
   );
