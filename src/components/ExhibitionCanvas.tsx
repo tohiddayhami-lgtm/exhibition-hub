@@ -196,80 +196,227 @@ function GroundPlane({ hall, onFloorClick, teleportTarget }: {
 }
 
 // In-booth LCD screen — shows video texture or product image on the back wall
-function VideoLCDScreen({ booth }: { booth: Booth }) {
-  const [videoTex, setVideoTex] = useState<THREE.VideoTexture | null>(null);
-  const [imgTex, setImgTex]     = useState<THREE.Texture | null>(null);
-  const videoElRef = useRef<HTMLVideoElement | null>(null);
+// ── YouTube helpers ──────────────────────────────────────────────────────────
+function getYouTubeId(url: string): string | null {
+  const m = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/);
+  return m ? m[1] : null;
+}
+function toYouTubeEmbed(id: string) {
+  return `https://www.youtube.com/embed/${id}?autoplay=1&rel=0&modestbranding=1`;
+}
 
-  // Video texture — muted autoplay so it works without user interaction
-  useEffect(() => {
-    if (!booth.videoUrl) return;
-    const v = document.createElement('video');
-    v.src = booth.videoUrl;
-    v.crossOrigin = 'anonymous';
-    v.loop = true;
-    v.muted = true;
-    v.playsInline = true;
-    v.autoplay = true;
-    const tex = new THREE.VideoTexture(v);
-    tex.minFilter = THREE.LinearFilter;
-    tex.magFilter = THREE.LinearFilter;
-    v.play().catch(() => {});
-    videoElRef.current = v;
-    setVideoTex(tex);
-    return () => { v.pause(); v.src = ''; tex.dispose(); setVideoTex(null); };
-  }, [booth.videoUrl]);
+// ── Control button helper (3D clickable button, works in VR) ─────────────────
+function LCDButton({
+  label, color, textColor = 'white', x, y, w, h, onClick,
+}: {
+  label: string; color: string; textColor?: string;
+  x: number; y: number; w: number; h: number;
+  onClick: () => void;
+}) {
+  const [hov, setHov] = useState(false);
+  return (
+    <group position={[x, y, 0]}>
+      <mesh
+        onClick={onClick}
+        onPointerOver={() => setHov(true)}
+        onPointerOut={() => setHov(false)}
+      >
+        <planeGeometry args={[w, h]} />
+        <meshStandardMaterial color={hov ? '#334155' : color} roughness={0.1} metalness={0.6} />
+      </mesh>
+      <Text position={[0, 0, 0.008]} fontSize={h * 0.38} color={textColor} anchorX="center" anchorY="middle" outlineWidth={0.003} outlineColor="#000">
+        {label}
+      </Text>
+    </group>
+  );
+}
 
-  // Static image texture fallback
+// ── YouTube LCD — thumbnail + red play button → opens overlay/panel ───────────
+function YouTubeLCDScreen({
+  booth, ytId, onOpenMedia,
+}: { booth: Booth; ytId: string; onOpenMedia: (url: string, title: string) => void }) {
+  const [thumbTex, setThumbTex] = useState<THREE.Texture | null>(null);
+
   useEffect(() => {
-    if (booth.videoUrl || !booth.productImageUrl) return;
     const loader = new THREE.TextureLoader();
     loader.crossOrigin = 'anonymous';
-    loader.load(booth.productImageUrl, t => setImgTex(t), undefined, () => {});
-    return () => { imgTex?.dispose(); };
+    loader.load(`https://img.youtube.com/vi/${ytId}/hqdefault.jpg`, t => setThumbTex(t), undefined, () => {});
+    return () => { thumbTex?.dispose(); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [booth.productImageUrl, booth.videoUrl]);
-
-  const togglePlay = () => {
-    const v = videoElRef.current;
-    if (!v) return;
-    v.paused ? v.play().catch(() => {}) : v.pause();
-  };
+  }, [ytId]);
 
   const screenW = Math.min(booth.width * 0.72, 3.2);
   const screenH = screenW * (9 / 16);
-  // Position: centred on back wall, sitting above the inner graphic panel
   const posY = booth.height * 0.42;
+  const play = () => onOpenMedia(toYouTubeEmbed(ytId), booth.companyName);
 
   return (
     <group position={[0, posY, -booth.depth / 2 + 0.22]}>
-      {/* Physical bezel */}
       <mesh>
         <boxGeometry args={[screenW + 0.1, screenH + 0.08, 0.06]} />
         <meshStandardMaterial color="#0a0a0a" roughness={0.1} metalness={0.95} />
       </mesh>
-      {/* Screen surface — click to toggle play */}
-      <mesh position={[0, 0, 0.04]} onClick={togglePlay}>
+      {/* Thumbnail */}
+      <mesh position={[0, 0, 0.04]} onClick={play}>
         <planeGeometry args={[screenW, screenH]} />
-        {videoTex ? (
-          <meshBasicMaterial map={videoTex} toneMapped={false} />
-        ) : imgTex ? (
-          <meshBasicMaterial map={imgTex} />
-        ) : (
-          <meshStandardMaterial
-            color="#0d1117"
-            emissive={booth.themeColor || '#1a2744'}
-            emissiveIntensity={0.12}
-          />
-        )}
+        {thumbTex
+          ? <meshBasicMaterial map={thumbTex} />
+          : <meshStandardMaterial color="#0d1117" emissive={booth.themeColor || '#111'} emissiveIntensity={0.1} />
+        }
       </mesh>
-      {/* LED edge accent */}
+      {/* Red play circle */}
+      <mesh position={[0, 0, 0.06]} onClick={play}>
+        <circleGeometry args={[Math.min(screenW, screenH) * 0.2, 32]} />
+        <meshBasicMaterial color="#ff0000" transparent opacity={0.88} />
+      </mesh>
+      <Text position={[0.04, 0, 0.075]} fontSize={Math.min(screenW, screenH) * 0.18} color="white" anchorX="center" anchorY="middle">{'▶'}</Text>
+      <Text position={[0, -(screenH * 0.4), 0.06]} fontSize={0.085} color="#94a3b8" anchorX="center" anchorY="middle">
+        {'Tap to play on YouTube'}
+      </Text>
       <mesh position={[0, 0, -0.01]}>
         <planeGeometry args={[screenW + 0.06, screenH + 0.05]} />
         <meshBasicMaterial color={booth.themeColor || '#334155'} transparent opacity={0.2} />
       </mesh>
     </group>
   );
+}
+
+// ── Direct MP4/WebM LCD — VideoTexture + full controls bar ───────────────────
+function DirectVideoLCDScreen({ booth }: { booth: Booth }) {
+  const [videoTex, setVideoTex] = useState<THREE.VideoTexture | null>(null);
+  const [imgTex, setImgTex]     = useState<THREE.Texture | null>(null);
+  const [playing, setPlaying]   = useState(false);
+  const [muted, setMuted]       = useState(true);
+  const videoElRef = useRef<HTMLVideoElement | null>(null);
+
+  useEffect(() => {
+    if (!booth.videoUrl) return;
+    const v = document.createElement('video');
+    v.src = booth.videoUrl;
+    v.crossOrigin = 'anonymous';
+    v.loop = true;
+    v.muted = true;     // starts muted — user must unmute via Sound button
+    v.playsInline = true;
+    const tex = new THREE.VideoTexture(v);
+    tex.minFilter = THREE.LinearFilter;
+    tex.magFilter = THREE.LinearFilter;
+    v.play().then(() => setPlaying(true)).catch(() => {});
+    videoElRef.current = v;
+    setVideoTex(tex);
+    return () => { v.pause(); v.src = ''; tex.dispose(); setVideoTex(null); };
+  }, [booth.videoUrl]);
+
+  useEffect(() => {
+    if (booth.videoUrl || !booth.productImageUrl) return;
+    const loader = new THREE.TextureLoader();
+    loader.crossOrigin = 'anonymous';
+    loader.load(booth.productImageUrl, t => setImgTex(t), undefined, () => {});
+  }, [booth.productImageUrl, booth.videoUrl]);
+
+  const togglePlay = () => {
+    const v = videoElRef.current;
+    if (!v) return;
+    if (v.paused) { v.play().catch(() => {}); setPlaying(true); }
+    else          { v.pause(); setPlaying(false); }
+  };
+  const toggleMute = () => {
+    const v = videoElRef.current;
+    if (!v) return;
+    v.muted = !v.muted;
+    setMuted(v.muted);
+  };
+  const seek = (s: number) => {
+    const v = videoElRef.current;
+    if (v) v.currentTime = Math.max(0, v.currentTime + s);
+  };
+
+  const screenW = Math.min(booth.width * 0.72, 3.2);
+  const screenH = screenW * (9 / 16);
+  const posY = booth.height * 0.42;
+
+  // Control bar dimensions
+  const barH = 0.3;
+  const btnW = screenW * 0.21;
+  const btnH = barH * 0.78;
+  const gap  = (screenW - btnW * 4) / 5;
+  const btnY = -(screenH / 2 + barH / 2 + 0.04);
+
+  return (
+    <group position={[0, posY, -booth.depth / 2 + 0.22]}>
+      {/* Bezel */}
+      <mesh>
+        <boxGeometry args={[screenW + 0.1, screenH + 0.08 + barH + 0.12, 0.06]} />
+        <meshStandardMaterial color="#0a0a0a" roughness={0.1} metalness={0.95} />
+      </mesh>
+
+      {/* Screen */}
+      <mesh position={[0, 0, 0.04]} onClick={togglePlay}>
+        <planeGeometry args={[screenW, screenH]} />
+        {videoTex
+          ? <meshBasicMaterial map={videoTex} toneMapped={false} />
+          : imgTex
+            ? <meshBasicMaterial map={imgTex} />
+            : <meshStandardMaterial color="#0d1117" emissive={booth.themeColor || '#1a2744'} emissiveIntensity={0.12} />
+        }
+      </mesh>
+
+      {/* LED border */}
+      <mesh position={[0, 0, -0.01]}>
+        <planeGeometry args={[screenW + 0.06, screenH + 0.05]} />
+        <meshBasicMaterial color={booth.themeColor || '#334155'} transparent opacity={0.2} />
+      </mesh>
+
+      {/* Control bar background */}
+      <mesh position={[0, btnY, 0.042]}>
+        <planeGeometry args={[screenW, barH]} />
+        <meshStandardMaterial color="#0d1117" roughness={0} metalness={0.6} transparent opacity={0.95} />
+      </mesh>
+
+      {/* ← -30s */}
+      <LCDButton
+        label="-30s" color="#1e293b" textColor="#94a3b8"
+        x={-(gap * 1.5 + btnW * 1.5)} y={btnY} w={btnW} h={btnH}
+        onClick={() => seek(-30)}
+      />
+      {/* Play / Pause */}
+      <LCDButton
+        label={playing ? 'Pause' : 'Play'} color={playing ? '#14532d' : '#1e293b'} textColor={playing ? '#4ade80' : '#e2e8f0'}
+        x={-(gap * 0.5 + btnW * 0.5)} y={btnY} w={btnW} h={btnH}
+        onClick={togglePlay}
+      />
+      {/* Sound / Muted */}
+      <LCDButton
+        label={muted ? 'Muted' : 'Sound'} color={muted ? '#450a0a' : '#14532d'} textColor={muted ? '#f87171' : '#4ade80'}
+        x={(gap * 0.5 + btnW * 0.5)} y={btnY} w={btnW} h={btnH}
+        onClick={toggleMute}
+      />
+      {/* +30s */}
+      <LCDButton
+        label="+30s" color="#1e293b" textColor="#94a3b8"
+        x={(gap * 1.5 + btnW * 1.5)} y={btnY} w={btnW} h={btnH}
+        onClick={() => seek(30)}
+      />
+    </group>
+  );
+}
+
+// ── VideoLCDScreen — routes to YouTube or direct video player ─────────────────
+function VideoLCDScreen({
+  booth, onOpenMedia,
+}: { booth: Booth; onOpenMedia: (url: string, title: string) => void }) {
+  const url = booth.videoUrl;
+
+  if (!url) {
+    // No video: show product image or dark standby screen
+    return <DirectVideoLCDScreen booth={booth} />;
+  }
+
+  const ytId = getYouTubeId(url);
+  if (ytId) {
+    return <YouTubeLCDScreen booth={booth} ytId={ytId} onOpenMedia={onOpenMedia} />;
+  }
+
+  return <DirectVideoLCDScreen booth={booth} />;
 }
 
 // Industrial Overhead Scaffoldings and high ceiling structure support
@@ -333,11 +480,13 @@ function ExhibitionWall({ hall }: { hall: Hall }) {
 function BoothStructure({
   booth,
   active,
-  onSelect
+  onSelect,
+  onOpenMedia,
 }: {
   booth: Booth;
   active: boolean;
   onSelect: () => void;
+  onOpenMedia: (url: string, title: string) => void;
 }) {
   const [hovered, setHovered] = useState(false);
 
@@ -486,7 +635,7 @@ function BoothStructure({
       </group>
 
       {/* 7. LCD SCREEN — video/image texture on back wall */}
-      <VideoLCDScreen booth={booth} />
+      <VideoLCDScreen booth={booth} onOpenMedia={onOpenMedia} />
 
       {/* 8. PRODUCT DISPLAY */}
       <group position={[0, 0.05, 0]}>
@@ -550,6 +699,7 @@ function BoothStructure({
 
 // Memoised — only re-renders when this booth's data or active state changes.
 // With 100 booths, without memo every camera/visitor move would re-render all 100.
+// onOpenMedia is stable (useCallback in ExhibitionCanvas), so excluded from comparison
 const MemoBoothStructure = React.memo(BoothStructure, (prev, next) =>
   prev.active === next.active && prev.booth === next.booth
 );
@@ -1490,6 +1640,7 @@ export default function ExhibitionCanvas({
               booth={booth}
               active={activeBoothId === booth.id}
               onSelect={() => onSelectBooth(booth)}
+              onOpenMedia={handleOpenOverlay}
             />
           ))}
         </Suspense>
