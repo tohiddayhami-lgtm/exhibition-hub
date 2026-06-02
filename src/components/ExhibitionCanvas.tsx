@@ -172,6 +172,50 @@ function getPdfViewerUrl(url: string, page: number, zoom: number) {
   return `${normalizedUrl}#page=${page}&zoom=${zoom}`;
 }
 
+function getGoogleDriveFileId(url: string) {
+  const normalizedUrl = normalizeExternalUrl(url);
+  const fileMatch = normalizedUrl.match(/drive\.google\.com\/file\/d\/([^/]+)/i);
+  if (fileMatch?.[1]) return fileMatch[1];
+
+  const queryMatch = normalizedUrl.match(/[?&]id=([^&]+)/i);
+  if (normalizedUrl.includes('drive.google.com') && queryMatch?.[1]) {
+    return queryMatch[1];
+  }
+
+  return null;
+}
+
+function getSpatialPdfUrlCandidates(url: string) {
+  const normalizedUrl = normalizeExternalUrl(url);
+  if (!normalizedUrl) return [];
+
+  const rawCandidates = new Set<string>();
+  rawCandidates.add(normalizedUrl);
+
+  const googleDriveId = getGoogleDriveFileId(normalizedUrl);
+  if (googleDriveId) {
+    rawCandidates.add(`https://drive.google.com/uc?export=download&id=${googleDriveId}`);
+    rawCandidates.add(`https://drive.google.com/uc?id=${googleDriveId}&export=download`);
+  }
+
+  if (normalizedUrl.includes('dropbox.com')) {
+    rawCandidates.add(normalizedUrl.replace('www.dropbox.com', 'dl.dropboxusercontent.com').replace(/[?&]dl=0/i, ''));
+    rawCandidates.add(normalizedUrl.replace(/[?&]dl=0/i, '?dl=1'));
+  }
+
+  if (normalizedUrl.includes('github.com') && normalizedUrl.includes('/blob/')) {
+    rawCandidates.add(normalizedUrl.replace('github.com', 'raw.githubusercontent.com').replace('/blob/', '/'));
+  }
+
+  const candidates = new Set<string>();
+  Array.from(rawCandidates).forEach((candidate) => {
+    candidates.add(candidate);
+    candidates.add(`/api/pdf-proxy?url=${encodeURIComponent(candidate)}`);
+  });
+
+  return Array.from(candidates);
+}
+
 // ── Control button helper (3D clickable button, works in VR) ─────────────────
 function LCDButton({
   label, color, textColor = 'white', x, y, w, h, onClick,
@@ -474,6 +518,7 @@ function BoothPdfPanel({
   const [pageCount, setPageCount] = useState(1);
   const [texture, setTexture] = useState<THREE.CanvasTexture | null>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [errorMessage, setErrorMessage] = useState('');
   const textureRef = useRef<THREE.CanvasTexture | null>(null);
 
   const col = booth.themeColor || '#2563eb';
@@ -487,48 +532,65 @@ function BoothPdfPanel({
 
     let cancelled = false;
     setStatus('loading');
+    setErrorMessage('');
 
     const renderPdfPage = async () => {
-      try {
-        const loadingTask = pdfjsLib.getDocument({
-          url: normalizeExternalUrl(url),
-          withCredentials: false,
-        });
-        const pdf = await loadingTask.promise;
-        if (cancelled) return;
+      const candidates = getSpatialPdfUrlCandidates(url);
+      let lastError: unknown = null;
 
-        const safePage = Math.max(1, Math.min(page, pdf.numPages));
-        setPageCount(pdf.numPages);
-        if (safePage !== page) {
-          onPageChange(safePage);
-          return;
+      try {
+        for (const candidateUrl of candidates) {
+          try {
+            const loadingTask = pdfjsLib.getDocument({
+              url: candidateUrl,
+              withCredentials: false,
+              disableRange: true,
+              disableStream: true,
+              disableAutoFetch: true,
+            });
+            const pdf = await loadingTask.promise;
+            if (cancelled) return;
+
+            const safePage = Math.max(1, Math.min(page, pdf.numPages));
+            setPageCount(pdf.numPages);
+            if (safePage !== page) {
+              onPageChange(safePage);
+              return;
+            }
+
+            const pdfPage = await pdf.getPage(safePage);
+            if (cancelled) return;
+
+            const viewport = pdfPage.getViewport({ scale: Math.max(0.8, Math.min(2.4, zoom / 80)) });
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            if (!context) throw new Error('Canvas 2D context is unavailable');
+
+            canvas.width = Math.floor(viewport.width);
+            canvas.height = Math.floor(viewport.height);
+            await pdfPage.render({ canvas, canvasContext: context, viewport }).promise;
+            if (cancelled) return;
+
+            const nextTexture = new THREE.CanvasTexture(canvas);
+            nextTexture.colorSpace = THREE.SRGBColorSpace;
+            nextTexture.anisotropy = 4;
+            nextTexture.needsUpdate = true;
+
+            textureRef.current?.dispose();
+            textureRef.current = nextTexture;
+            setTexture(nextTexture);
+            setStatus('ready');
+            return;
+          } catch (error) {
+            lastError = error;
+          }
         }
 
-        const pdfPage = await pdf.getPage(safePage);
-        if (cancelled) return;
-
-        const viewport = pdfPage.getViewport({ scale: Math.max(0.8, Math.min(2.4, zoom / 80)) });
-        const canvas = document.createElement('canvas');
-        const context = canvas.getContext('2d');
-        if (!context) throw new Error('Canvas 2D context is unavailable');
-
-        canvas.width = Math.floor(viewport.width);
-        canvas.height = Math.floor(viewport.height);
-        await pdfPage.render({ canvas, canvasContext: context, viewport }).promise;
-        if (cancelled) return;
-
-        const nextTexture = new THREE.CanvasTexture(canvas);
-        nextTexture.colorSpace = THREE.SRGBColorSpace;
-        nextTexture.anisotropy = 4;
-        nextTexture.needsUpdate = true;
-
-        textureRef.current?.dispose();
-        textureRef.current = nextTexture;
-        setTexture(nextTexture);
-        setStatus('ready');
+        throw lastError ?? new Error('No PDF source candidates available');
       } catch (error) {
         if (cancelled) return;
         console.warn('Failed to render spatial PDF panel:', error);
+        setErrorMessage(error instanceof Error ? error.message : 'PDF source blocked or invalid');
         setStatus('error');
       }
     };
@@ -579,7 +641,7 @@ function BoothPdfPanel({
         {status === 'loading'
           ? 'Loading PDF...'
           : status === 'error'
-            ? 'PDF cannot be rendered'
+            ? `PDF cannot be rendered\n${errorMessage || 'Use a direct public PDF URL'}`
             : `${side === 'left' ? 'Left' : 'Right'} PDF | Page ${page}/${pageCount} | Zoom ${zoom}%`}
       </Text>
 

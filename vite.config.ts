@@ -1,11 +1,67 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
+
+function pdfProxyPlugin(): Plugin {
+  const handlePdfProxy = async (req: any, res: any, next?: () => void) => {
+    if (!req.url?.startsWith('/api/pdf-proxy')) {
+      next?.();
+      return;
+    }
+
+    try {
+      const requestUrl = new URL(req.url, 'http://localhost');
+      const targetUrl = requestUrl.searchParams.get('url');
+
+      if (!targetUrl || !/^https?:\/\//i.test(targetUrl)) {
+        res.statusCode = 400;
+        res.end('Missing valid PDF URL');
+        return;
+      }
+
+      const response = await fetch(targetUrl, {
+        headers: {
+          accept: 'application/pdf,*/*',
+          'user-agent': 'Mozilla/5.0 ExhibitionHubPDFProxy/1.0',
+        },
+      });
+
+      if (!response.ok) {
+        res.statusCode = response.status;
+        res.end(`PDF fetch failed: ${response.status}`);
+        return;
+      }
+
+      const contentType = response.headers.get('content-type') || 'application/pdf';
+      const data = Buffer.from(await response.arrayBuffer());
+
+      res.statusCode = 200;
+      res.setHeader('content-type', contentType.includes('pdf') ? contentType : 'application/pdf');
+      res.setHeader('cache-control', 'public, max-age=300');
+      res.setHeader('access-control-allow-origin', '*');
+      res.end(data);
+    } catch (error) {
+      console.error('[pdf-proxy] failed', error);
+      res.statusCode = 502;
+      res.end('PDF proxy failed');
+    }
+  };
+
+  return {
+    name: 'exhibition-pdf-proxy',
+    configureServer(server) {
+      server.middlewares.use(handlePdfProxy);
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use(handlePdfProxy);
+    },
+  };
+}
 
 export default defineConfig(() => {
   return {
-    plugins: [react(), tailwindcss()],
+    plugins: [react(), tailwindcss(), pdfProxyPlugin()],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
